@@ -6,7 +6,8 @@ import re
 import os
 import json
 import tempfile
-import duckdb
+
+from supabase import create_client
 
 from datetime import datetime
 
@@ -132,6 +133,25 @@ def obtener_drive_service():
 
 
 drive_service = obtener_drive_service()
+
+@st.cache_resource
+def obtener_supabase():
+
+    url = os.environ[
+        "SUPABASE_URL"
+    ]
+
+    key = os.environ[
+        "SUPABASE_KEY"
+    ]
+
+    return create_client(
+        url,
+        key
+    )
+
+
+supabase = obtener_supabase()
 
 
 def buscar_archivo_drive(
@@ -294,7 +314,6 @@ def sincronizar_archivos_drive():
     return True
 
 
-sincronizar_archivos_drive()
 # =========================
 # COLORES
 # =========================
@@ -691,13 +710,6 @@ def preparar_base_para_busqueda(
 # CARGAR DATOS
 # =========================
 
-def cargar_compendio_columnas():
-
-    return pd.read_parquet(
-        RUTA_PARQUET,
-        columns=COLUMNAS_COMPENDIO
-    )
-
 def buscar_orden_fuerte(
     valor_busqueda
 ):
@@ -713,56 +725,45 @@ def buscar_orden_fuerte(
 
         return pd.DataFrame()
 
-    columnas = [
-        "ORDEN",
-        "ORDEN DE SUMINISTRO",
-        "NO. ORDEN",
-        "ESTATUS_BASE",
-        "ENTIDAD",
-        "PROVEEDOR",
-        "CLAVE CNIS",
-        "DESCRIPCIÓN",
-        "TIPO DE ENTREGA",
-        "NO. DE PZAS. EMITIDAS",
-        "PZAS. RECIBIDAS POR O.L.",
-        "PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"
-    ]
-
-    base = pd.read_parquet(
-        RUTA_PARQUET,
-        columns=[
-            col for col in columnas
-            if col in COLUMNAS_COMPENDIO
-        ]
-    )
-
-    mask = (
-        base["ORDEN"]
-        .astype(str)
-        .str.upper()
-        .str.contains(
-            valor,
-            na=False
+    respuesta = (
+        supabase
+        .table(
+            "compendio"
         )
+        .select(
+            "*"
+        )
+        .ilike(
+            "orden_suministro",
+            f"%{valor}%"
+        )
+        .limit(
+            50
+        )
+        .execute()
     )
 
-    resultado = base[
-        mask
-    ].copy()
+    datos = respuesta.data
 
-    return resultado.head(50)
+    if not datos:
 
+        return pd.DataFrame()
+
+    return pd.DataFrame(
+        datos
+    )
 def sugerir_ordenes(
     valor_busqueda,
     limite=10
 ):
 
-    return buscar_orden_fuerte(
+    resultado = buscar_orden_fuerte(
         valor_busqueda
-    ).head(
-        limite
     )
 
+    return resultado.head(
+        limite
+    )
 
 def cargar_incidencias():
 
@@ -1767,18 +1768,29 @@ elif menu == "Seguimiento":
 elif menu == "Base ligera":
 
     st.subheader(
-        "⚡ Base ligera"
+        "⚡ Base Supabase"
     )
 
     st.info(
-        "La base ligera no se carga completa para no saturar Render Free."
+        "La información ya se consulta desde Supabase."
     )
 
-    muestra = pd.read_parquet(
-        RUTA_PARQUET,
-        columns=COLUMNAS_COMPENDIO
-    ).head(
-        100
+    respuesta = (
+        supabase
+        .table(
+            "compendio"
+        )
+        .select(
+            "*"
+        )
+        .limit(
+            100
+        )
+        .execute()
+    )
+
+    muestra = pd.DataFrame(
+        respuesta.data
     )
 
     st.dataframe(
