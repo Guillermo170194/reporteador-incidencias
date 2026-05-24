@@ -555,17 +555,56 @@ def preparar_columnas(
 
 def generar_base_ligera():
 
-    data = pd.read_excel(
-        RUTA_COMPENDIO,
-        sheet_name="DATA",
-        engine="pyxlsb"
-    )
+columnas_necesarias = [
 
-    canceladas = pd.read_excel(
-        RUTA_COMPENDIO,
-        sheet_name="CANCELADAS",
-        engine="pyxlsb"
-    )
+    "TIPO DE ENTREGA",
+    "ENTIDAD",
+    "ESTADO",
+    "CLUES DESTINO",
+    "CVE CLUES DESTINO",
+    "UNIDAD DESTINO",
+    "ALMACÉN",
+    "ALMACEN",
+    "LUGAR DE ENTREGA",
+    "PROVEEDOR",
+    "ORDEN",
+    "ORDEN DE SUMINISTRO",
+    "NO. ORDEN",
+    "CLAVE",
+    "CLAVE CNIS",
+    "CLAVE INSUMO",
+    "CVE INSUMO",
+    "CLAVE DEL INSUMO",
+    "DESCRIPCIÓN",
+    "DESCRIPCION",
+    "TIPO DE RED",
+    "GRUPO TERAPEUTICO",
+    "GRUPO TERAPÉUTICO",
+    "ESTATUS",
+    "ESTATUS DE LA ORDEN DE SUMINISTRO",
+    "OPERADOR LOGÍSTICO",
+    "OPERADOR LOGISTICO",
+    "NO. DE PZAS. EMITIDAS",
+    "PZAS. RECIBIDAS POR O.L.",
+    "PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"
+
+]
+
+data = pd.read_excel(
+    RUTA_COMPENDIO,
+    sheet_name="DATA",
+    engine="pyxlsb",
+    usecols=lambda c:
+    str(c).strip().upper() in columnas_necesarias
+)
+
+canceladas = pd.read_excel(
+    RUTA_COMPENDIO,
+    sheet_name="CANCELADAS",
+    engine="pyxlsb",
+    usecols=lambda c:
+    str(c).strip().upper() in columnas_necesarias
+)
 
     data = preparar_columnas(
         data
