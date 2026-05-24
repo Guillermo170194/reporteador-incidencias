@@ -518,20 +518,29 @@ def obtener_valor(
 
     for col in opciones:
 
-        if col in fila.index:
+        posibles = [
+            col,
+            str(col).lower(),
+            str(col).upper()
+        ]
 
-            valor = fila.get(
-                col,
-                ""
-            )
+        for posible in posibles:
 
-            if (
-                pd.notna(valor)
-                and str(valor).strip()
-                and str(valor).strip().lower() != "nan"
-            ):
+            if posible in fila.index:
 
-                return valor
+                valor = fila.get(
+                    posible,
+                    ""
+                )
+
+                if (
+                    pd.notna(valor)
+                    and str(valor).strip()
+                    and str(valor).strip().lower() != "nan"
+                    and str(valor).strip().lower() != "none"
+                ):
+
+                    return valor
 
     return ""
 
