@@ -1,8 +1,10 @@
+
 streamlit
 pandas
+numpy
+altair
 openpyxl
 pyxlsb
-altair
 pyarrow
 google-api-python-client
 google-auth
