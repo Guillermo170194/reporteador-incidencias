@@ -284,12 +284,17 @@ def subir_archivo_drive(
     ttl=600,
     show_spinner="Sincronizando archivos..."
 )
+@st.cache_data(
+    ttl=600,
+    show_spinner="Sincronizando archivos..."
+)
 def sincronizar_archivos_drive():
 
-    descargar_por_nombre(
+    existe_parquet = descargar_por_nombre(
         ARCHIVO_PARQUET,
         FOLDER_ID_BASES,
-        RUTA_PARQUET
+        RUTA_PARQUET,
+        obligatorio=False
     )
 
     descargar_por_nombre(
@@ -306,9 +311,10 @@ def sincronizar_archivos_drive():
         obligatorio=False
     )
 
-    return True
+    return existe_parquet
 
-sincronizar_archivos_drive()
+parquet_existe = sincronizar_archivos_drive()
+
 # =========================
 # COLORES
 # =========================
@@ -856,17 +862,15 @@ def cargar_compendio_ligero():
         RUTA_PARQUET
     ):
 
-        descargar_por_nombre(
-            ARCHIVO_PARQUET,
-            FOLDER_ID_BASES,
-            RUTA_PARQUET,
-            obligatorio=True
-        )
+        with st.spinner(
+            "No encontré base ligera. Generándola desde el compendio..."
+        ):
+
+            generar_base_ligera_desde_xlsb()
 
     return pd.read_parquet(
         RUTA_PARQUET
     )
-
 
 def cargar_incidencias():
 
