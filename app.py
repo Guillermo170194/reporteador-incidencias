@@ -6,6 +6,7 @@ import re
 import os
 import json
 import tempfile
+import duckdb
 
 from datetime import datetime
 
@@ -692,9 +693,10 @@ def preparar_base_para_busqueda(
 
 def cargar_compendio_columnas():
 
-    if not os.path.exists(
-        RUTA_PARQUET
-    ):
+    return pd.read_parquet(
+        RUTA_PARQUET,
+        columns=COLUMNAS_COMPENDIO
+    )
 
         descargar_archivo_drive(
             PARQUET_FILE_ID,
@@ -724,52 +726,51 @@ def buscar_orden_fuerte(
 
         return pd.DataFrame()
 
-    base = cargar_compendio_columnas()
-
-    base_temp = preparar_base_para_busqueda(
-        base
-    )
-
-    exacto = base_temp[
-        base_temp["_ORDEN_BUSQUEDA"] == valor
-    ]
-
-    contiene = base_temp[
-        base_temp["_ORDEN_BUSQUEDA"]
-        .str.contains(
-            valor,
-            case=False,
-            na=False,
-            regex=False
-        )
-    ]
-
-    resultado = pd.concat(
+    columnas_sql = ", ".join(
         [
-            exacto,
-            contiene
-        ],
-        ignore_index=True
+            f'"{col}"'
+            for col in COLUMNAS_COMPENDIO
+        ]
     )
+
+    query = f"""
+        SELECT {columnas_sql}
+        FROM read_parquet('{RUTA_PARQUET}')
+        WHERE
+            UPPER(REPLACE(CAST("ORDEN DE SUMINISTRO" AS VARCHAR), ' ', '')) LIKE '%{valor}%'
+            OR UPPER(REPLACE(CAST("ORDEN" AS VARCHAR), ' ', '')) LIKE '%{valor}%'
+            OR UPPER(REPLACE(CAST("NO. ORDEN" AS VARCHAR), ' ', '')) LIKE '%{valor}%'
+        LIMIT 100
+    """
+
+    resultado = duckdb.query(
+        query
+    ).to_df()
 
     if resultado.empty:
 
         return pd.DataFrame()
 
-    resultado = (
-        resultado
-        .sort_values(
+    if "ESTATUS_BASE" in resultado.columns:
+
+        resultado["_PRIORIDAD"] = resultado[
+            "ESTATUS_BASE"
+        ].apply(
+            lambda x:
+            0 if str(x).upper().strip() == "INACTIVA"
+            else 1
+        )
+
+        resultado = resultado.sort_values(
             "_PRIORIDAD"
         )
-        .drop_duplicates()
-        .drop(
+
+        resultado = resultado.drop(
             columns=[
-                "_ORDEN_BUSQUEDA",
                 "_PRIORIDAD"
             ],
             errors="ignore"
         )
-    )
 
     return resultado
 
@@ -779,74 +780,11 @@ def sugerir_ordenes(
     limite=10
 ):
 
-    valor = normalizar_orden(
+    return buscar_orden_fuerte(
         valor_busqueda
+    ).head(
+        limite
     )
-
-    if (
-        not valor
-        or valor == "NAN"
-    ):
-
-        return pd.DataFrame()
-
-    base = cargar_compendio_columnas()
-
-    base_temp = preparar_base_para_busqueda(
-        base
-    )
-
-    partes = [
-        p for p in valor.split("-")
-        if len(p) >= 4
-    ]
-
-    sugerencias = []
-
-    for parte in partes:
-
-        encontrados = base_temp[
-            base_temp["_ORDEN_BUSQUEDA"]
-            .str.contains(
-                parte,
-                case=False,
-                na=False,
-                regex=False
-            )
-        ]
-
-        if not encontrados.empty:
-
-            sugerencias.append(
-                encontrados
-            )
-
-    if not sugerencias:
-
-        return pd.DataFrame()
-
-    salida = pd.concat(
-        sugerencias,
-        ignore_index=True
-    )
-
-    salida = (
-        salida
-        .sort_values(
-            "_PRIORIDAD"
-        )
-        .drop_duplicates()
-        .head(limite)
-        .drop(
-            columns=[
-                "_ORDEN_BUSQUEDA",
-                "_PRIORIDAD"
-            ],
-            errors="ignore"
-        )
-    )
-
-    return salida
 
 
 def cargar_incidencias():
