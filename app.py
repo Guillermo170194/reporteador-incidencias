@@ -4,17 +4,13 @@ import numpy as np
 import altair as alt
 import re
 import os
-import io
 import json
 import tempfile
-import unicodedata
 
 from datetime import datetime
 
 from google.oauth2 import service_account
-
 from googleapiclient.discovery import build
-
 from googleapiclient.http import (
     MediaIoBaseDownload,
     MediaFileUpload
@@ -45,6 +41,10 @@ FOLDER_ID_INCIDENCIAS = (
     "1bMw-Un3KZHQds0zsRZAKSXuAggSuL4PG"
 )
 
+COMPENDIO_FILE_ID = (
+    "1JNV2LZrDy-SPAly0bueay7DAz5hnczYf"
+)
+
 # =========================
 # ARCHIVOS
 # =========================
@@ -66,16 +66,39 @@ ARCHIVO_AGENDA = (
 )
 
 # =========================
-# SCOPES
+# RUTAS TEMPORALES
+# =========================
+
+TEMP_DIR = tempfile.gettempdir()
+
+RUTA_COMPENDIO = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_COMPENDIO
+)
+
+RUTA_PARQUET = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_PARQUET
+)
+
+RUTA_INCIDENCIAS = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_INCIDENCIAS
+)
+
+RUTA_AGENDA = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_AGENDA
+)
+
+# =========================
+# GOOGLE DRIVE
 # =========================
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# =========================
-# GOOGLE DRIVE
-# =========================
 
 @st.cache_resource
 def obtener_drive_service():
@@ -102,54 +125,26 @@ def obtener_drive_service():
 
     return service
 
+
 drive_service = obtener_drive_service()
 
-# =========================
-# CARPETA TEMP
-# =========================
-
-TEMP_DIR = tempfile.gettempdir()
-
-RUTA_COMPENDIO = os.path.join(
-    TEMP_DIR,
-    ARCHIVO_COMPENDIO
-)
-
-RUTA_PARQUET = os.path.join(
-    TEMP_DIR,
-    ARCHIVO_PARQUET
-)
-
-RUTA_INCIDENCIAS = os.path.join(
-    TEMP_DIR,
-    ARCHIVO_INCIDENCIAS
-)
-
-RUTA_AGENDA = os.path.join(
-    TEMP_DIR,
-    ARCHIVO_AGENDA
-)
-
-# =========================
-# BUSCAR ARCHIVO DRIVE
-# =========================
 
 def buscar_archivo_drive(
     nombre_archivo,
     folder_id
 ):
 
-    query = f"""
-    name = '{nombre_archivo}'
-    and '{folder_id}' in parents
-    and trashed = false
-    """
+    query = (
+        f"name = '{nombre_archivo}' "
+        f"and '{folder_id}' in parents "
+        f"and trashed = false"
+    )
 
     resultados = (
         drive_service.files()
         .list(
             q=query,
-            fields="files(id,name)"
+            fields="files(id, name)"
         )
         .execute()
     )
@@ -165,9 +160,6 @@ def buscar_archivo_drive(
 
     return archivos[0]
 
-# =========================
-# DESCARGAR ARCHIVO
-# =========================
 
 def descargar_archivo_drive(
     file_id,
@@ -193,15 +185,10 @@ def descargar_archivo_drive(
 
         done = False
 
-        while done is False:
+        while not done:
 
-            status, done = (
-                downloader.next_chunk()
-            )
+            status, done = downloader.next_chunk()
 
-# =========================
-# DESCARGAR POR NOMBRE
-# =========================
 
 def descargar_por_nombre(
     nombre_archivo,
@@ -220,7 +207,7 @@ def descargar_por_nombre(
         if obligatorio:
 
             st.error(
-                f"No se encontró: {nombre_archivo}"
+                f"No se encontró en Google Drive: {nombre_archivo}"
             )
 
             st.stop()
@@ -234,9 +221,6 @@ def descargar_por_nombre(
 
     return True
 
-# =========================
-# SUBIR ARCHIVO DRIVE
-# =========================
 
 def subir_archivo_drive(
     ruta_archivo,
@@ -244,11 +228,9 @@ def subir_archivo_drive(
     folder_id
 ):
 
-    archivo_existente = (
-        buscar_archivo_drive(
-            nombre_archivo,
-            folder_id
-        )
+    archivo_existente = buscar_archivo_drive(
+        nombre_archivo,
+        folder_id
     )
 
     media = MediaFileUpload(
@@ -267,7 +249,9 @@ def subir_archivo_drive(
 
         metadata = {
             "name": nombre_archivo,
-            "parents": [folder_id]
+            "parents": [
+                folder_id
+            ]
         }
 
         drive_service.files().create(
@@ -276,17 +260,10 @@ def subir_archivo_drive(
             fields="id"
         ).execute()
 
-# =========================
-# SINCRONIZAR DRIVE
-# =========================
 
 @st.cache_data(
     ttl=600,
-    show_spinner="Sincronizando archivos..."
-)
-@st.cache_data(
-    ttl=600,
-    show_spinner="Sincronizando archivos..."
+    show_spinner="Sincronizando archivos desde Google Drive..."
 )
 def sincronizar_archivos_drive():
 
@@ -313,8 +290,8 @@ def sincronizar_archivos_drive():
 
     return existe_parquet
 
-parquet_existe = sincronizar_archivos_drive()
 
+parquet_existe = sincronizar_archivos_drive()
 # =========================
 # COLORES
 # =========================
@@ -732,11 +709,9 @@ def es_operador_logistico(
 
 def generar_base_ligera_desde_xlsb():
 
-    descargar_por_nombre(
-        ARCHIVO_COMPENDIO,
-        FOLDER_ID_BASES,
-        RUTA_COMPENDIO,
-        obligatorio=True
+    descargar_archivo_drive(
+        COMPENDIO_FILE_ID,
+        RUTA_COMPENDIO
     )
 
     data = pd.read_excel(
@@ -851,7 +826,6 @@ def generar_base_ligera_desde_xlsb():
     )
 
     return base
-
 # =========================
 # CARGAR DATOS
 # =========================
@@ -871,6 +845,7 @@ def cargar_compendio_ligero():
     return pd.read_parquet(
         RUTA_PARQUET
     )
+
 
 def cargar_incidencias():
 
@@ -1014,6 +989,8 @@ def guardar_incidencia(
         ARCHIVO_INCIDENCIAS,
         FOLDER_ID_INCIDENCIAS
     )
+
+
 # =========================
 # EVIDENCIAS DRIVE
 # =========================
@@ -1193,8 +1170,9 @@ def subir_pdf_evidencia_drive(
         ""
     )
 
+
 # =========================
-# BUSQUEDA Y CRUCE
+# BÚSQUEDA Y CRUCE
 # =========================
 
 def columnas_orden_disponibles(
@@ -1491,8 +1469,6 @@ def obtener_cita_agenda(
         return None
 
     return encontrado.iloc[0]
-
-
 def actualizar_incidencias_con_compendio(
     incidencias,
     base
@@ -1634,6 +1610,7 @@ def actualizar_incidencias_con_compendio(
             fila,
             ["PZAS. RECIBIDAS POR O.L."]
         )
+
         piezas_entregadas_clues = obtener_valor(
             fila,
             ["PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"]
