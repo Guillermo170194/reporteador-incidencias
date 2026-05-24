@@ -698,19 +698,6 @@ def cargar_compendio_columnas():
         columns=COLUMNAS_COMPENDIO
     )
 
-        descargar_archivo_drive(
-            PARQUET_FILE_ID,
-            RUTA_PARQUET
-        )
-
-    base = pd.read_parquet(
-        RUTA_PARQUET,
-        columns=COLUMNAS_COMPENDIO
-    )
-
-    return base
-
-
 def buscar_orden_fuerte(
     valor_busqueda
 ):
