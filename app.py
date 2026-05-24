@@ -1389,100 +1389,87 @@ elif menu == "Registrar incidencia":
             orden = obtener_valor(
                 fila,
                 [
-                    "ORDEN DE SUMINISTRO",
-                    "ORDEN",
-                    "NO. ORDEN"
+                    "orden_suministro",
+                    "orden",
+                    "no_orden"
                 ]
             )
 
             tipo_entrega = obtener_valor(
                 fila,
                 [
-                    "TIPO DE ENTREGA"
+                    "tipo_entrega"
                 ]
             )
 
             entidad = obtener_valor(
                 fila,
                 [
-                    "ENTIDAD",
-                    "ESTADO"
+                    "entidad",
+                    "estado"
                 ]
             )
 
             clues_destino = obtener_valor(
                 fila,
                 [
-                    "CLUES DESTINO",
-                    "CVE CLUES DESTINO"
+                    "clues_destino"
                 ]
             )
 
             unidad_destino = obtener_valor(
                 fila,
                 [
-                    "UNIDAD DESTINO"
+                    "unidad_destino"
                 ]
             )
 
             almacen_original = obtener_valor(
                 fila,
                 [
-                    "ALMACÉN",
-                    "ALMACEN",
-                    "LUGAR DE ENTREGA"
+                    "almacen"
                 ]
-            )
-
-            almacen = construir_almacen(
-                clues_destino,
-                unidad_destino,
-                almacen_original
             )
 
             proveedor = obtener_valor(
                 fila,
                 [
-                    "PROVEEDOR"
+                    "proveedor"
                 ]
             )
 
             clave = obtener_valor(
                 fila,
                 [
-                    "CLAVE CNIS",
-                    "CLAVE",
-                    "CLAVE INSUMO",
-                    "CVE INSUMO"
+                    "clave_cnis"
                 ]
             )
 
             descripcion = obtener_valor(
                 fila,
                 [
-                    "DESCRIPCIÓN",
-                    "DESCRIPCION"
+                    "descripcion"
                 ]
             )
 
             piezas_emitidas = obtener_valor(
                 fila,
                 [
-                    "NO. DE PZAS. EMITIDAS"
+                    "piezas_emitidas"
                 ]
             )
 
             piezas_recibidas_ol = obtener_valor(
                 fila,
                 [
-                    "PZAS. RECIBIDAS POR O.L."
+                    "piezas_recibidas_ol"
                 ]
             )
 
             piezas_entregadas = obtener_valor(
                 fila,
                 [
-                    "PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"
+                    "piezas_entregadas_clues"
                 ]
             )
 
