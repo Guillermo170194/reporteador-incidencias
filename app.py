@@ -266,10 +266,18 @@ def subir_archivo_drive(
 )
 def sincronizar_archivos_drive():
 
-    descargar_archivo_drive(
-        "1WW0_0k-1UGX-7qnI4TJNLMwzIWFA6ARs",
-        RUTA_PARQUET
-    )
+    try:
+
+        descargar_archivo_drive(
+            "1WW0_0k-1UGX-7qnI4TJNLMwzIWFA6ARs",
+            RUTA_PARQUET
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Error descargando parquet: {e}"
+        )
 
     descargar_por_nombre(
         ARCHIVO_INCIDENCIAS,
@@ -287,8 +295,8 @@ def sincronizar_archivos_drive():
 
     return True
 
-
 parquet_existe = sincronizar_archivos_drive()
+
 
 # =========================
 # COLORES
