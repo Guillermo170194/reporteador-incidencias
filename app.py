@@ -54,7 +54,7 @@ ARCHIVO_COMPENDIO = (
 )
 
 ARCHIVO_PARQUET = (
-    "base_compendio_ligera.parquet"
+    "1WW0_0k-1UGX-7qnI4TJNLMwzIWFA6ARs"
 )
 
 ARCHIVO_INCIDENCIAS = (
@@ -264,13 +264,12 @@ def subir_archivo_drive(
     ttl=600,
     show_spinner="Sincronizando archivos desde Google Drive..."
 )
-def sincronizar_archivos_drive():
+    descargar_archivo_drive(
+        PARQUET_FILE_ID,
+        RUTA_PARQUET
+    )
 
-    existe_parquet = descargar_por_nombre(
-        ARCHIVO_PARQUET,
-        FOLDER_ID_BASES,
-        RUTA_PARQUET,
-        obligatorio=False
+    existe_parquet = True
     )
 
     descargar_por_nombre(
