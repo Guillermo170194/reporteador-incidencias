@@ -1322,7 +1322,18 @@ def sugerir_ordenes(
 # APP
 # =========================
 
-sincronizar_archivos_drive()
+@st.cache_data(
+    ttl=600,
+    show_spinner="Sincronizando archivos desde Google Drive..."
+)
+def sincronizar_archivos_drive_cache():
+
+    sincronizar_archivos_drive()
+
+    return True
+
+
+sincronizar_archivos_drive_cache()
 
 st.title("📌 Reporteador de Incidencias 2026")
 
@@ -1337,8 +1348,10 @@ forzar_actualizacion = st.sidebar.button(
 )
 
 if forzar_actualizacion:
+
     st.cache_data.clear()
-    sincronizar_archivos_drive()
+
+    sincronizar_archivos_drive_cache()
 
 base = cargar_compendio_ligero()
 
