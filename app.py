@@ -741,7 +741,9 @@ def buscar_orden_fuerte(
             50
         )
         .execute()
-    )    datos = respuesta.data
+    )
+
+    datos = respuesta.data
 
     if not datos:
 
@@ -750,6 +752,7 @@ def buscar_orden_fuerte(
     return pd.DataFrame(
         datos
     )
+
 def sugerir_ordenes(
     valor_busqueda,
     limite=10
