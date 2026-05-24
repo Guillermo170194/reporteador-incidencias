@@ -733,17 +733,15 @@ def buscar_orden_fuerte(
         .select(
             "*"
         )
-        .ilike(
+        .eq(
             "orden_suministro",
-            f"%{valor}%"
+            valor
         )
         .limit(
             50
         )
         .execute()
-    )
-
-    datos = respuesta.data
+    )    datos = respuesta.data
 
     if not datos:
 
