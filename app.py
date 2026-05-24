@@ -713,54 +713,44 @@ def buscar_orden_fuerte(
 
         return pd.DataFrame()
 
-    columnas_sql = ", ".join(
-        [
-            f'"{col}"'
-            for col in COLUMNAS_COMPENDIO
+    columnas = [
+        "ORDEN",
+        "ORDEN DE SUMINISTRO",
+        "NO. ORDEN",
+        "ESTATUS_BASE",
+        "ENTIDAD",
+        "PROVEEDOR",
+        "CLAVE CNIS",
+        "DESCRIPCIÓN",
+        "TIPO DE ENTREGA",
+        "NO. DE PZAS. EMITIDAS",
+        "PZAS. RECIBIDAS POR O.L.",
+        "PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"
+    ]
+
+    base = pd.read_parquet(
+        RUTA_PARQUET,
+        columns=[
+            col for col in columnas
+            if col in COLUMNAS_COMPENDIO
         ]
     )
 
-    query = f"""
-        SELECT {columnas_sql}
-        FROM read_parquet('{RUTA_PARQUET}')
-        WHERE
-            UPPER(REPLACE(CAST("ORDEN DE SUMINISTRO" AS VARCHAR), ' ', '')) LIKE '%{valor}%'
-            OR UPPER(REPLACE(CAST("ORDEN" AS VARCHAR), ' ', '')) LIKE '%{valor}%'
-            OR UPPER(REPLACE(CAST("NO. ORDEN" AS VARCHAR), ' ', '')) LIKE '%{valor}%'
-        LIMIT 100
-    """
-
-    resultado = duckdb.query(
-        query
-    ).to_df()
-
-    if resultado.empty:
-
-        return pd.DataFrame()
-
-    if "ESTATUS_BASE" in resultado.columns:
-
-        resultado["_PRIORIDAD"] = resultado[
-            "ESTATUS_BASE"
-        ].apply(
-            lambda x:
-            0 if str(x).upper().strip() == "INACTIVA"
-            else 1
+    mask = (
+        base["ORDEN"]
+        .astype(str)
+        .str.upper()
+        .str.contains(
+            valor,
+            na=False
         )
+    )
 
-        resultado = resultado.sort_values(
-            "_PRIORIDAD"
-        )
+    resultado = base[
+        mask
+    ].copy()
 
-        resultado = resultado.drop(
-            columns=[
-                "_PRIORIDAD"
-            ],
-            errors="ignore"
-        )
-
-    return resultado
-
+    return resultado.head(50)
 
 def sugerir_ordenes(
     valor_busqueda,
