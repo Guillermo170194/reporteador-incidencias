@@ -1,22 +1,317 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import altair as alt
-from datetime import datetime
-from pathlib import Path
 import re
 import os
 import io
 import json
+import tempfile
+import unicodedata
+
+from datetime import datetime
 
 from google.oauth2 import service_account
+
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-from googleapiclient.http import MediaFileUpload
+
+from googleapiclient.http import (
+    MediaIoBaseDownload,
+    MediaFileUpload
+)
+
+# =========================
+# CONFIG STREAMLIT
+# =========================
 
 st.set_page_config(
-    page_title="Reporteador de Incidencias 2026",
+    page_title="Reporteador de Incidencias",
     layout="wide"
 )
+
+# =========================
+# IDS DRIVE
+# =========================
+
+FOLDER_ID_BASES = (
+    "1J1hHDZDTt8CMVBJ6TW8uPd_EU6laYbhG"
+)
+
+FOLDER_ID_EVIDENCIAS = (
+    "1Fbxzc1SC-c5yaLh7z1h4qIG8sY5W78B0"
+)
+
+FOLDER_ID_INCIDENCIAS = (
+    "1bMw-Un3KZHQds0zsRZAKSXuAggSuL4PG"
+)
+
+# =========================
+# ARCHIVOS
+# =========================
+
+ARCHIVO_COMPENDIO = (
+    "CompendioAbasto25-26_22.05.2026.xlsb"
+)
+
+ARCHIVO_PARQUET = (
+    "base_compendio_ligera.parquet"
+)
+
+ARCHIVO_INCIDENCIAS = (
+    "incidencias.xlsx"
+)
+
+ARCHIVO_AGENDA = (
+    "agenda_citas.xlsx"
+)
+
+# =========================
+# SCOPES
+# =========================
+
+SCOPES = [
+    "https://www.googleapis.com/auth/drive"
+]
+
+# =========================
+# GOOGLE DRIVE
+# =========================
+
+@st.cache_resource
+def obtener_drive_service():
+
+    credenciales = json.loads(
+        os.environ[
+            "GOOGLE_CREDENTIALS"
+        ]
+    )
+
+    credentials = (
+        service_account.Credentials
+        .from_service_account_info(
+            credenciales,
+            scopes=SCOPES
+        )
+    )
+
+    service = build(
+        "drive",
+        "v3",
+        credentials=credentials
+    )
+
+    return service
+
+drive_service = obtener_drive_service()
+
+# =========================
+# CARPETA TEMP
+# =========================
+
+TEMP_DIR = tempfile.gettempdir()
+
+RUTA_COMPENDIO = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_COMPENDIO
+)
+
+RUTA_PARQUET = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_PARQUET
+)
+
+RUTA_INCIDENCIAS = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_INCIDENCIAS
+)
+
+RUTA_AGENDA = os.path.join(
+    TEMP_DIR,
+    ARCHIVO_AGENDA
+)
+
+# =========================
+# BUSCAR ARCHIVO DRIVE
+# =========================
+
+def buscar_archivo_drive(
+    nombre_archivo,
+    folder_id
+):
+
+    query = f"""
+    name = '{nombre_archivo}'
+    and '{folder_id}' in parents
+    and trashed = false
+    """
+
+    resultados = (
+        drive_service.files()
+        .list(
+            q=query,
+            fields="files(id,name)"
+        )
+        .execute()
+    )
+
+    archivos = resultados.get(
+        "files",
+        []
+    )
+
+    if len(archivos) == 0:
+
+        return None
+
+    return archivos[0]
+
+# =========================
+# DESCARGAR ARCHIVO
+# =========================
+
+def descargar_archivo_drive(
+    file_id,
+    ruta_destino
+):
+
+    request = (
+        drive_service.files()
+        .get_media(
+            fileId=file_id
+        )
+    )
+
+    with open(
+        ruta_destino,
+        "wb"
+    ) as archivo:
+
+        downloader = MediaIoBaseDownload(
+            archivo,
+            request
+        )
+
+        done = False
+
+        while done is False:
+
+            status, done = (
+                downloader.next_chunk()
+            )
+
+# =========================
+# DESCARGAR POR NOMBRE
+# =========================
+
+def descargar_por_nombre(
+    nombre_archivo,
+    folder_id,
+    ruta_destino,
+    obligatorio=True
+):
+
+    archivo = buscar_archivo_drive(
+        nombre_archivo,
+        folder_id
+    )
+
+    if archivo is None:
+
+        if obligatorio:
+
+            st.error(
+                f"No se encontró: {nombre_archivo}"
+            )
+
+            st.stop()
+
+        return False
+
+    descargar_archivo_drive(
+        archivo["id"],
+        ruta_destino
+    )
+
+    return True
+
+# =========================
+# SUBIR ARCHIVO DRIVE
+# =========================
+
+def subir_archivo_drive(
+    ruta_archivo,
+    nombre_archivo,
+    folder_id
+):
+
+    archivo_existente = (
+        buscar_archivo_drive(
+            nombre_archivo,
+            folder_id
+        )
+    )
+
+    media = MediaFileUpload(
+        ruta_archivo,
+        resumable=True
+    )
+
+    if archivo_existente:
+
+        drive_service.files().update(
+            fileId=archivo_existente["id"],
+            media_body=media
+        ).execute()
+
+    else:
+
+        metadata = {
+            "name": nombre_archivo,
+            "parents": [folder_id]
+        }
+
+        drive_service.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id"
+        ).execute()
+
+# =========================
+# SINCRONIZAR DRIVE
+# =========================
+
+@st.cache_data(
+    ttl=600,
+    show_spinner="Sincronizando archivos..."
+)
+def sincronizar_archivos_drive():
+
+    descargar_por_nombre(
+        ARCHIVO_PARQUET,
+        FOLDER_ID_BASES,
+        RUTA_PARQUET
+    )
+
+    descargar_por_nombre(
+        ARCHIVO_INCIDENCIAS,
+        FOLDER_ID_INCIDENCIAS,
+        RUTA_INCIDENCIAS,
+        obligatorio=False
+    )
+
+    descargar_por_nombre(
+        ARCHIVO_AGENDA,
+        FOLDER_ID_BASES,
+        RUTA_AGENDA,
+        obligatorio=False
+    )
+
+    return True
+
+sincronizar_archivos_drive()
+# =========================
+# COLORES
+# =========================
 
 COLOR_VINO = "#7A1F3D"
 COLOR_VINO_OSCURO = "#5F1830"
@@ -85,29 +380,6 @@ st.markdown(
 )
 
 # =========================
-# ARCHIVOS EN DRIVE
-# =========================
-
-ARCHIVO_COMPENDIO = "CompendioAbasto25-26_22.05.2026.xlsb"
-ARCHIVO_AGENDA_CITAS = "Acumulado Estrategia Nacional 22.05.26_Limpia.xlsx"
-ARCHIVO_INCIDENCIAS = "INCIDENCIAS 2026.xlsx"
-
-FOLDER_BASES = "1J1hHDZDTt8CMVBJ6TW8uPd_EU6laYbhG"
-FOLDER_EVIDENCIAS = "1Fbxzc1SC-c5yaLh7z1h4qIG8sY5W78B0"
-FOLDER_INCIDENCIAS = "1bMw-Un3KZHQds0zsRZAKSXuAggSuL4PG"
-
-CARPETA_TEMPORAL = Path("/tmp/jarvis_incidencias")
-
-CARPETA_TEMPORAL.mkdir(
-    parents=True,
-    exist_ok=True
-)
-
-RUTA_COMPENDIO = CARPETA_TEMPORAL / ARCHIVO_COMPENDIO
-RUTA_AGENDA_CITAS = CARPETA_TEMPORAL / ARCHIVO_AGENDA_CITAS
-RUTA_INCIDENCIAS = CARPETA_TEMPORAL / ARCHIVO_INCIDENCIAS
-
-# =========================
 # CATÁLOGOS
 # =========================
 
@@ -134,266 +406,6 @@ TIPOS_INCIDENCIA_GENERAL = [
 ]
 
 # =========================
-# GOOGLE DRIVE
-# =========================
-
-SCOPES = [
-    "https://www.googleapis.com/auth/drive"
-]
-
-
-@st.cache_resource
-def obtener_drive_service():
-
-    google_credentials = json.loads(
-        os.environ["GOOGLE_CREDENTIALS"]
-    )
-
-    credentials = (
-        service_account.Credentials
-        .from_service_account_info(
-            google_credentials,
-            scopes=SCOPES
-        )
-    )
-
-    service = build(
-        "drive",
-        "v3",
-        credentials=credentials
-    )
-
-    return service
-
-
-drive_service = obtener_drive_service()
-
-
-def buscar_archivo_drive(
-    nombre_archivo,
-    folder_id
-):
-
-    query = (
-        f"name = '{nombre_archivo}' "
-        f"and '{folder_id}' in parents "
-        f"and trashed = false"
-    )
-
-    resultado = drive_service.files().list(
-        q=query,
-        fields="files(id, name, modifiedTime)",
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True
-    ).execute()
-
-    archivos = resultado.get(
-        "files",
-        []
-    )
-
-    if not archivos:
-        return None
-
-    archivos = sorted(
-        archivos,
-        key=lambda x: x.get(
-            "modifiedTime",
-            ""
-        ),
-        reverse=True
-    )
-
-    return archivos[0]
-
-
-def descargar_archivo_drive(
-    file_id,
-    ruta_local
-):
-
-    request = drive_service.files().get_media(
-        fileId=file_id
-    )
-
-    with io.FileIO(
-        ruta_local,
-        "wb"
-    ) as archivo:
-
-        downloader = MediaIoBaseDownload(
-            archivo,
-            request
-        )
-
-        terminado = False
-
-        while not terminado:
-
-            status, terminado = downloader.next_chunk()
-
-
-def descargar_por_nombre(
-    nombre_archivo,
-    folder_id,
-    ruta_local,
-    obligatorio=True
-):
-
-    archivo = buscar_archivo_drive(
-        nombre_archivo,
-        folder_id
-    )
-
-    if archivo is None:
-
-        if obligatorio:
-
-            st.error(
-                f"No encontré en Drive el archivo: {nombre_archivo}"
-            )
-
-            st.stop()
-
-        return None
-
-    descargar_archivo_drive(
-        archivo["id"],
-        ruta_local
-    )
-
-    return archivo["id"]
-
-
-def subir_o_actualizar_archivo_drive(
-    ruta_local,
-    nombre_archivo,
-    folder_id,
-    mime_type
-):
-
-    archivo_existente = buscar_archivo_drive(
-        nombre_archivo,
-        folder_id
-    )
-
-    media = MediaFileUpload(
-        str(ruta_local),
-        mimetype=mime_type,
-        resumable=True
-    )
-
-    if archivo_existente is None:
-
-        metadata = {
-            "name": nombre_archivo,
-            "parents": [
-                folder_id
-            ]
-        }
-
-        nuevo = drive_service.files().create(
-            body=metadata,
-            media_body=media,
-            fields="id, webViewLink",
-            supportsAllDrives=True
-        ).execute()
-
-        return nuevo
-
-    actualizado = drive_service.files().update(
-        fileId=archivo_existente["id"],
-        media_body=media,
-        fields="id, webViewLink",
-        supportsAllDrives=True
-    ).execute()
-
-    return actualizado
-
-
-def subir_pdf_drive(
-    archivo,
-    orden,
-    tipo_pdf
-):
-
-    if archivo is None:
-        return ""
-
-    fecha = datetime.now().strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
-    nombre_orden = limpiar_nombre_archivo(
-        orden
-    )
-
-    nombre_archivo = (
-        f"{fecha}_{nombre_orden}_{tipo_pdf}.pdf"
-    )
-
-    ruta_local = CARPETA_TEMPORAL / nombre_archivo
-
-    with open(
-        ruta_local,
-        "wb"
-    ) as f:
-
-        f.write(
-            archivo.getbuffer()
-        )
-
-    metadata = {
-        "name": nombre_archivo,
-        "parents": [
-            FOLDER_EVIDENCIAS
-        ]
-    }
-
-    media = MediaFileUpload(
-        str(ruta_local),
-        mimetype="application/pdf",
-        resumable=True
-    )
-
-    nuevo = drive_service.files().create(
-        body=metadata,
-        media_body=media,
-        fields="id, webViewLink",
-        supportsAllDrives=True
-    ).execute()
-
-    return nuevo.get(
-        "webViewLink",
-        ""
-    )
-
-
-def sincronizar_archivos_drive():
-
-    descargar_por_nombre(
-        ARCHIVO_COMPENDIO,
-        FOLDER_BASES,
-        RUTA_COMPENDIO,
-        obligatorio=True
-    )
-
-    descargar_por_nombre(
-        ARCHIVO_AGENDA_CITAS,
-        FOLDER_BASES,
-        RUTA_AGENDA_CITAS,
-        obligatorio=True
-    )
-
-    descargar_por_nombre(
-        ARCHIVO_INCIDENCIAS,
-        FOLDER_INCIDENCIAS,
-        RUTA_INCIDENCIAS,
-        obligatorio=False
-    )
-
-
-# =========================
 # GRÁFICAS
 # =========================
 
@@ -405,9 +417,11 @@ def grafica_barras(
 ):
 
     if columna not in df.columns:
+
         st.info(
             f"No existe la columna {columna}."
         )
+
         return
 
     datos = (
@@ -424,6 +438,7 @@ def grafica_barras(
     ]
 
     if limite:
+
         datos = datos.head(
             limite
         )
@@ -532,9 +547,8 @@ def grafica_resumen(
         use_container_width=True
     )
 
-
 # =========================
-# BASES
+# FUNCIONES BASE
 # =========================
 
 def preparar_columnas(
@@ -553,58 +567,184 @@ def preparar_columnas(
     return df
 
 
-def generar_base_ligera():
+def normalizar_orden(
+    valor
+):
 
-    columnas_necesarias = [
+    return (
+        str(valor)
+        .upper()
+        .strip()
+        .replace(" ", "")
+        .replace("_", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+    )
 
-        "TIPO DE ENTREGA",
-        "ENTIDAD",
-        "ESTADO",
-        "CLUES DESTINO",
-        "CVE CLUES DESTINO",
-        "UNIDAD DESTINO",
-        "ALMACÉN",
-        "ALMACEN",
-        "LUGAR DE ENTREGA",
-        "PROVEEDOR",
-        "ORDEN",
-        "ORDEN DE SUMINISTRO",
-        "NO. ORDEN",
-        "CLAVE",
-        "CLAVE CNIS",
-        "CLAVE INSUMO",
-        "CVE INSUMO",
-        "CLAVE DEL INSUMO",
-        "DESCRIPCIÓN",
-        "DESCRIPCION",
-        "TIPO DE RED",
-        "GRUPO TERAPEUTICO",
-        "GRUPO TERAPÉUTICO",
-        "ESTATUS",
-        "ESTATUS DE LA ORDEN DE SUMINISTRO",
-        "OPERADOR LOGÍSTICO",
-        "OPERADOR LOGISTICO",
-        "NO. DE PZAS. EMITIDAS",
-        "PZAS. RECIBIDAS POR O.L.",
-        "PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"
 
-    ]
+def limpiar_nombre_archivo(
+    texto
+):
+
+    texto = str(texto)
+
+    texto = re.sub(
+        r"[^A-Za-z0-9_\-]+",
+        "_",
+        texto
+    )
+
+    return texto[:80]
+
+
+def limpiar_nombre_carpeta(
+    texto
+):
+
+    texto = str(texto).strip()
+
+    if (
+        not texto
+        or texto.lower() == "nan"
+    ):
+
+        texto = "SIN_DATO"
+
+    texto = re.sub(
+        r'[\\/:*?"<>|]+',
+        "_",
+        texto
+    )
+
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto
+    )
+
+    return texto[:100]
+
+
+def obtener_valor(
+    fila,
+    opciones
+):
+
+    for col in opciones:
+
+        if col in fila.index:
+
+            valor = fila.get(
+                col,
+                ""
+            )
+
+            if (
+                pd.notna(valor)
+                and str(valor).strip()
+                and str(valor).strip().lower() != "nan"
+            ):
+
+                return valor
+
+    return ""
+
+
+def convertir_numero(
+    valor
+):
+
+    try:
+
+        return float(
+            str(valor)
+            .replace(",", "")
+            .replace("$", "")
+            .strip()
+        )
+
+    except:
+
+        return 0
+
+
+def calcular_estatus_piezas(
+    piezas_emitidas,
+    piezas_validar
+):
+
+    emitidas = convertir_numero(
+        piezas_emitidas
+    )
+
+    validadas = convertir_numero(
+        piezas_validar
+    )
+
+    if validadas == 0:
+
+        return "NO ENTREGADA"
+
+    if validadas < emitidas:
+
+        return "ENTREGA PARCIAL"
+
+    return "ENTREGADA COMPLETA"
+
+
+def calcular_estatus_incidencia_completa(
+    estatus_entrega_estado
+):
+
+    if (
+        str(estatus_entrega_estado)
+        .upper()
+        .strip()
+        == "ENTREGADA COMPLETA"
+    ):
+
+        return "COMPLETA"
+
+    return "INCOMPLETA"
+
+
+def es_operador_logistico(
+    tipo_entrega
+):
+
+    tipo = str(tipo_entrega).upper().strip()
+
+    return (
+        "OPERADOR" in tipo
+        or "LOGISTICO" in tipo
+        or "LOGÍSTICO" in tipo
+    )
+
+# =========================
+# GENERAR PARQUET DESDE XLSB
+# =========================
+
+def generar_base_ligera_desde_xlsb():
+
+    descargar_por_nombre(
+        ARCHIVO_COMPENDIO,
+        FOLDER_ID_BASES,
+        RUTA_COMPENDIO,
+        obligatorio=True
+    )
 
     data = pd.read_excel(
         RUTA_COMPENDIO,
         sheet_name="DATA",
-        engine="pyxlsb",
-        usecols=lambda c:
-        str(c).strip().upper() in columnas_necesarias
+        engine="pyxlsb"
     )
 
     canceladas = pd.read_excel(
         RUTA_COMPENDIO,
         sheet_name="CANCELADAS",
-        engine="pyxlsb",
-        usecols=lambda c:
-        str(c).strip().upper() in columnas_necesarias
+        engine="pyxlsb"
     )
+
     data = preparar_columnas(
         data
     )
@@ -686,18 +826,46 @@ def generar_base_ligera():
     for col in columnas_utiles:
 
         if col not in base.columns:
+
             base[col] = ""
 
     base = base[
         columnas_utiles
     ].copy()
 
+    base.to_parquet(
+        RUTA_PARQUET,
+        index=False
+    )
+
+    subir_archivo_drive(
+        RUTA_PARQUET,
+        ARCHIVO_PARQUET,
+        FOLDER_ID_BASES
+    )
+
     return base
 
+# =========================
+# CARGAR DATOS
+# =========================
 
 def cargar_compendio_ligero():
 
-    return generar_base_ligera()
+    if not os.path.exists(
+        RUTA_PARQUET
+    ):
+
+        descargar_por_nombre(
+            ARCHIVO_PARQUET,
+            FOLDER_ID_BASES,
+            RUTA_PARQUET,
+            obligatorio=True
+        )
+
+    return pd.read_parquet(
+        RUTA_PARQUET
+    )
 
 
 def cargar_incidencias():
@@ -738,7 +906,9 @@ def cargar_incidencias():
         "PDF_CORREO_SEGUIMIENTO": ""
     }
 
-    if RUTA_INCIDENCIAS.exists():
+    if os.path.exists(
+        RUTA_INCIDENCIAS
+    ):
 
         incidencias = pd.read_excel(
             RUTA_INCIDENCIAS
@@ -754,365 +924,28 @@ def cargar_incidencias():
         for columna, valor_default in columnas_necesarias.items():
 
             if columna not in incidencias.columns:
+
                 incidencias[columna] = valor_default
 
         return incidencias
 
     return pd.DataFrame(
-        columns=list(columnas_necesarias.keys())
-    )
-def guardar_incidencia(
-    nueva
-):
-
-    incidencias = cargar_incidencias()
-
-    incidencias = pd.concat(
-        [
-            incidencias,
-            pd.DataFrame([nueva])
-        ],
-        ignore_index=True
-    )
-
-    incidencias.to_excel(
-        RUTA_INCIDENCIAS,
-        index=False
-    )
-
-    subir_o_actualizar_archivo_drive(
-        RUTA_INCIDENCIAS,
-        ARCHIVO_INCIDENCIAS,
-        FOLDER_INCIDENCIAS,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-
-def obtener_valor(
-    fila,
-    opciones
-):
-
-    for col in opciones:
-
-        if col in fila.index:
-
-            valor = fila.get(
-                col,
-                ""
-            )
-
-            if (
-                pd.notna(valor)
-                and str(valor).strip()
-                and str(valor).strip().lower() != "nan"
-            ):
-                return valor
-
-    return ""
-
-
-def convertir_numero(
-    valor
-):
-
-    try:
-        return float(
-            str(valor)
-            .replace(",", "")
-            .replace("$", "")
-            .strip()
+        columns=list(
+            columnas_necesarias.keys()
         )
-
-    except:
-        return 0
-
-
-def limpiar_nombre_archivo(
-    texto
-):
-
-    texto = str(texto)
-
-    texto = re.sub(
-        r"[^A-Za-z0-9_\-]+",
-        "_",
-        texto
-    )
-
-    return texto[:80]
-
-
-def limpiar_nombre_carpeta(
-    texto
-):
-
-    texto = str(texto).strip()
-
-    if (
-        not texto
-        or texto.lower() == "nan"
-    ):
-        texto = "SIN_DATO"
-
-    texto = re.sub(
-        r'[\\/:*?"<>|]+',
-        "_",
-        texto
-    )
-
-    texto = re.sub(
-        r"\s+",
-        " ",
-        texto
-    )
-
-    return texto[:100]
-
-
-def buscar_carpeta_drive(
-    nombre_carpeta,
-    parent_id
-):
-
-    nombre_carpeta = limpiar_nombre_carpeta(
-        nombre_carpeta
-    )
-
-    query = (
-        f"name = '{nombre_carpeta}' "
-        f"and mimeType = 'application/vnd.google-apps.folder' "
-        f"and '{parent_id}' in parents "
-        f"and trashed = false"
-    )
-
-    resultado = drive_service.files().list(
-        q=query,
-        fields="files(id, name)",
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True
-    ).execute()
-
-    carpetas = resultado.get(
-        "files",
-        []
-    )
-
-    if carpetas:
-        return carpetas[0]["id"]
-
-    return None
-
-
-def crear_carpeta_drive(
-    nombre_carpeta,
-    parent_id
-):
-
-    nombre_carpeta = limpiar_nombre_carpeta(
-        nombre_carpeta
-    )
-
-    metadata = {
-        "name": nombre_carpeta,
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": [
-            parent_id
-        ]
-    }
-
-    carpeta = drive_service.files().create(
-        body=metadata,
-        fields="id",
-        supportsAllDrives=True
-    ).execute()
-
-    return carpeta["id"]
-
-
-def obtener_o_crear_carpeta_drive(
-    nombre_carpeta,
-    parent_id
-):
-
-    carpeta_id = buscar_carpeta_drive(
-        nombre_carpeta,
-        parent_id
-    )
-
-    if carpeta_id:
-        return carpeta_id
-
-    return crear_carpeta_drive(
-        nombre_carpeta,
-        parent_id
-    )
-
-
-def obtener_carpeta_evidencia(
-    estado,
-    clues
-):
-
-    nombre_estado = limpiar_nombre_carpeta(
-        estado
-    )
-
-    nombre_clues = limpiar_nombre_carpeta(
-        clues
-    )
-
-    carpeta_estado_id = obtener_o_crear_carpeta_drive(
-        nombre_estado,
-        FOLDER_EVIDENCIAS
-    )
-
-    carpeta_clues_id = obtener_o_crear_carpeta_drive(
-        nombre_clues,
-        carpeta_estado_id
-    )
-
-    return carpeta_clues_id
-
-
-def subir_pdf_evidencia_drive(
-    archivo,
-    orden,
-    tipo_pdf,
-    estado,
-    clues
-):
-
-    if archivo is None:
-        return ""
-
-    carpeta_destino_id = obtener_carpeta_evidencia(
-        estado,
-        clues
-    )
-
-    fecha = datetime.now().strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
-    nombre_orden = limpiar_nombre_archivo(
-        orden
-    )
-
-    nombre_archivo = (
-        f"{fecha}_{nombre_orden}_{tipo_pdf}.pdf"
-    )
-
-    ruta_local = CARPETA_TEMPORAL / nombre_archivo
-
-    with open(
-        ruta_local,
-        "wb"
-    ) as f:
-
-        f.write(
-            archivo.getbuffer()
-        )
-
-    metadata = {
-        "name": nombre_archivo,
-        "parents": [
-            carpeta_destino_id
-        ]
-    }
-
-    media = MediaFileUpload(
-        str(ruta_local),
-        mimetype="application/pdf",
-        resumable=True
-    )
-
-    nuevo = drive_service.files().create(
-        body=metadata,
-        media_body=media,
-        fields="id, webViewLink",
-        supportsAllDrives=True
-    ).execute()
-
-    return nuevo.get(
-        "webViewLink",
-        ""
-    )
-
-
-def calcular_estatus_piezas(
-    piezas_emitidas,
-    piezas_validar
-):
-
-    emitidas = convertir_numero(
-        piezas_emitidas
-    )
-
-    validadas = convertir_numero(
-        piezas_validar
-    )
-
-    if validadas == 0:
-        return "NO ENTREGADA"
-
-    if validadas < emitidas:
-        return "ENTREGA PARCIAL"
-
-    return "ENTREGADA COMPLETA"
-
-
-def calcular_estatus_incidencia_completa(
-    estatus_entrega_estado
-):
-
-    if (
-        str(estatus_entrega_estado)
-        .upper()
-        .strip()
-        == "ENTREGADA COMPLETA"
-    ):
-        return "COMPLETA"
-
-    return "INCOMPLETA"
-
-
-def es_operador_logistico(
-    tipo_entrega
-):
-
-    tipo = str(tipo_entrega).upper().strip()
-
-    return (
-        "OPERADOR" in tipo
-        or "LOGISTICO" in tipo
-        or "LOGÍSTICO" in tipo
-    )
-
-
-def normalizar_orden(
-    valor
-):
-
-    return (
-        str(valor)
-        .upper()
-        .strip()
-        .replace(" ", "")
-        .replace("_", "-")
-        .replace("–", "-")
-        .replace("—", "-")
     )
 
 
 def cargar_agenda_citas():
 
-    if not RUTA_AGENDA_CITAS.exists():
+    if not os.path.exists(
+        RUTA_AGENDA
+    ):
+
         return pd.DataFrame()
 
     agenda = pd.read_excel(
-        RUTA_AGENDA_CITAS,
-        sheet_name="BD"
+        RUTA_AGENDA
     )
 
     agenda.columns = (
@@ -1123,9 +956,11 @@ def cargar_agenda_citas():
     )
 
     if "ORDEN DE SUMINISTRO" not in agenda.columns:
+
         return pd.DataFrame()
 
     if "FECHA  DE CITA AGENDA" not in agenda.columns:
+
         return pd.DataFrame()
 
     agenda["_ORDEN_BUSQUEDA"] = agenda[
@@ -1151,27 +986,212 @@ def cargar_agenda_citas():
     return agenda
 
 
-def obtener_cita_agenda(
-    agenda,
-    orden
+def guardar_incidencia(
+    nueva
 ):
 
-    if agenda.empty:
-        return None
+    incidencias = cargar_incidencias()
 
-    orden_norm = normalizar_orden(
+    incidencias = pd.concat(
+        [
+            incidencias,
+            pd.DataFrame([nueva])
+        ],
+        ignore_index=True
+    )
+
+    incidencias.to_excel(
+        RUTA_INCIDENCIAS,
+        index=False
+    )
+
+    subir_archivo_drive(
+        RUTA_INCIDENCIAS,
+        ARCHIVO_INCIDENCIAS,
+        FOLDER_ID_INCIDENCIAS
+    )
+# =========================
+# EVIDENCIAS DRIVE
+# =========================
+
+def buscar_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    nombre_carpeta = limpiar_nombre_carpeta(
+        nombre_carpeta
+    )
+
+    query = (
+        f"name = '{nombre_carpeta}' "
+        f"and mimeType = 'application/vnd.google-apps.folder' "
+        f"and '{parent_id}' in parents "
+        f"and trashed = false"
+    )
+
+    resultado = (
+        drive_service.files()
+        .list(
+            q=query,
+            fields="files(id,name)"
+        )
+        .execute()
+    )
+
+    carpetas = resultado.get(
+        "files",
+        []
+    )
+
+    if carpetas:
+
+        return carpetas[0]["id"]
+
+    return None
+
+
+def crear_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    nombre_carpeta = limpiar_nombre_carpeta(
+        nombre_carpeta
+    )
+
+    metadata = {
+        "name": nombre_carpeta,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [
+            parent_id
+        ]
+    }
+
+    carpeta = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            fields="id"
+        )
+        .execute()
+    )
+
+    return carpeta["id"]
+
+
+def obtener_o_crear_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    carpeta_id = buscar_carpeta_drive(
+        nombre_carpeta,
+        parent_id
+    )
+
+    if carpeta_id:
+
+        return carpeta_id
+
+    return crear_carpeta_drive(
+        nombre_carpeta,
+        parent_id
+    )
+
+
+def obtener_carpeta_evidencia(
+    estado,
+    clues
+):
+
+    carpeta_estado_id = obtener_o_crear_carpeta_drive(
+        estado,
+        FOLDER_ID_EVIDENCIAS
+    )
+
+    carpeta_clues_id = obtener_o_crear_carpeta_drive(
+        clues,
+        carpeta_estado_id
+    )
+
+    return carpeta_clues_id
+
+
+def subir_pdf_evidencia_drive(
+    archivo,
+    orden,
+    tipo_pdf,
+    estado,
+    clues
+):
+
+    if archivo is None:
+
+        return ""
+
+    carpeta_destino_id = obtener_carpeta_evidencia(
+        estado,
+        clues
+    )
+
+    fecha = datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
+    )
+
+    nombre_orden = limpiar_nombre_archivo(
         orden
     )
 
-    encontrado = agenda[
-        agenda["_ORDEN_BUSQUEDA"] == orden_norm
-    ]
+    nombre_archivo = (
+        f"{fecha}_{nombre_orden}_{tipo_pdf}.pdf"
+    )
 
-    if encontrado.empty:
-        return None
+    ruta_local = os.path.join(
+        TEMP_DIR,
+        nombre_archivo
+    )
 
-    return encontrado.iloc[0]
+    with open(
+        ruta_local,
+        "wb"
+    ) as f:
 
+        f.write(
+            archivo.getbuffer()
+        )
+
+    metadata = {
+        "name": nombre_archivo,
+        "parents": [
+            carpeta_destino_id
+        ]
+    }
+
+    media = MediaFileUpload(
+        ruta_local,
+        mimetype="application/pdf",
+        resumable=True
+    )
+
+    nuevo = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            media_body=media,
+            fields="id, webViewLink"
+        )
+        .execute()
+    )
+
+    return nuevo.get(
+        "webViewLink",
+        ""
+    )
+
+# =========================
+# BUSQUEDA Y CRUCE
+# =========================
 
 def columnas_orden_disponibles(
     base
@@ -1207,22 +1227,24 @@ def preparar_base_para_busqueda(
             normalizar_orden
         )
 
-        base_temp["_ORDEN_BUSQUEDA"] = base_temp[
-            "_ORDEN_BUSQUEDA"
-        ].mask(
-            base_temp["_ORDEN_BUSQUEDA"].eq("")
-            | base_temp["_ORDEN_BUSQUEDA"].eq("NAN"),
-            valores
+        base_temp["_ORDEN_BUSQUEDA"] = (
+            base_temp["_ORDEN_BUSQUEDA"]
+            .mask(
+                base_temp["_ORDEN_BUSQUEDA"].eq("")
+                | base_temp["_ORDEN_BUSQUEDA"].eq("NAN"),
+                valores
+            )
         )
 
     if "ESTATUS_BASE" in base_temp.columns:
 
-        base_temp["_PRIORIDAD"] = base_temp[
-            "ESTATUS_BASE"
-        ].apply(
-            lambda x:
-            0 if str(x).upper().strip() == "INACTIVA"
-            else 1
+        base_temp["_PRIORIDAD"] = (
+            base_temp["ESTATUS_BASE"]
+            .apply(
+                lambda x:
+                0 if str(x).upper().strip() == "INACTIVA"
+                else 1
+            )
         )
 
     else:
@@ -1241,7 +1263,11 @@ def buscar_orden_fuerte(
         valor_busqueda
     )
 
-    if not valor or valor == "NAN":
+    if (
+        not valor
+        or valor == "NAN"
+    ):
+
         return pd.DataFrame()
 
     base_temp = preparar_base_para_busqueda(
@@ -1253,7 +1279,8 @@ def buscar_orden_fuerte(
     ]
 
     contiene = base_temp[
-        base_temp["_ORDEN_BUSQUEDA"].str.contains(
+        base_temp["_ORDEN_BUSQUEDA"]
+        .str.contains(
             valor,
             case=False,
             na=False,
@@ -1270,6 +1297,7 @@ def buscar_orden_fuerte(
     )
 
     if resultado.empty:
+
         return pd.DataFrame()
 
     resultado = (
@@ -1300,7 +1328,11 @@ def sugerir_ordenes(
         valor_busqueda
     )
 
-    if not valor or valor == "NAN":
+    if (
+        not valor
+        or valor == "NAN"
+    ):
+
         return pd.DataFrame()
 
     base_temp = preparar_base_para_busqueda(
@@ -1317,7 +1349,8 @@ def sugerir_ordenes(
     for parte in partes:
 
         encontrados = base_temp[
-            base_temp["_ORDEN_BUSQUEDA"].str.contains(
+            base_temp["_ORDEN_BUSQUEDA"]
+            .str.contains(
                 parte,
                 case=False,
                 na=False,
@@ -1332,6 +1365,7 @@ def sugerir_ordenes(
             )
 
     if not sugerencias:
+
         return pd.DataFrame()
 
     salida = pd.concat(
@@ -1356,40 +1390,380 @@ def sugerir_ordenes(
     )
 
     return salida
+
+
+def construir_almacen(
+    clues_destino,
+    unidad_destino,
+    almacen_original
+):
+
+    clues = str(
+        clues_destino
+    ).strip()
+
+    unidad = str(
+        unidad_destino
+    ).strip()
+
+    if (
+        clues
+        and clues.lower() != "nan"
+        and unidad
+        and unidad.lower() != "nan"
+    ):
+
+        return f"{clues} - {unidad}"
+
+    if (
+        unidad
+        and unidad.lower() != "nan"
+    ):
+
+        return unidad
+
+    if (
+        clues
+        and clues.lower() != "nan"
+    ):
+
+        return clues
+
+    return almacen_original
+
+
+def obtener_orden_para_cruce(
+    row
+):
+
+    opciones = [
+        "ORDEN",
+        "ORDEN_BUSCADA",
+        "ORDEN DE SUMINISTRO",
+        "NO. ORDEN"
+    ]
+
+    for col in opciones:
+
+        if col in row.index:
+
+            valor = row.get(
+                col,
+                ""
+            )
+
+            if (
+                pd.notna(valor)
+                and str(valor).strip()
+                and str(valor).strip().lower() != "nan"
+            ):
+
+                return normalizar_orden(
+                    valor
+                )
+
+    return ""
+
+
+def obtener_cita_agenda(
+    agenda,
+    orden
+):
+
+    if agenda.empty:
+
+        return None
+
+    orden_norm = normalizar_orden(
+        orden
+    )
+
+    encontrado = agenda[
+        agenda["_ORDEN_BUSQUEDA"] == orden_norm
+    ]
+
+    if encontrado.empty:
+
+        return None
+
+    return encontrado.iloc[0]
+
+
+def actualizar_incidencias_con_compendio(
+    incidencias,
+    base
+):
+
+    if incidencias.empty:
+
+        return incidencias
+
+    base_temp = preparar_base_para_busqueda(
+        base
+    )
+
+    base_temp = (
+        base_temp
+        .sort_values(
+            "_PRIORIDAD"
+        )
+        .drop_duplicates(
+            "_ORDEN_BUSQUEDA"
+        )
+    )
+
+    mapa_base = base_temp.set_index(
+        "_ORDEN_BUSQUEDA"
+    )
+
+    incidencias = incidencias.copy()
+
+    incidencias = incidencias.astype(
+        "object"
+    )
+
+    incidencias["_ORDEN_CRUCE"] = incidencias.apply(
+        obtener_orden_para_cruce,
+        axis=1
+    )
+
+    for idx, row in incidencias.iterrows():
+
+        orden_cruce = row[
+            "_ORDEN_CRUCE"
+        ]
+
+        if (
+            not orden_cruce
+            or orden_cruce == "NAN"
+        ):
+
+            continue
+
+        if orden_cruce not in mapa_base.index:
+
+            continue
+
+        fila = mapa_base.loc[
+            orden_cruce
+        ]
+
+        tipo_entrega = obtener_valor(
+            fila,
+            ["TIPO DE ENTREGA"]
+        )
+
+        entidad = obtener_valor(
+            fila,
+            [
+                "ENTIDAD",
+                "ESTADO"
+            ]
+        )
+
+        clues_destino = obtener_valor(
+            fila,
+            [
+                "CLUES DESTINO",
+                "CVE CLUES DESTINO"
+            ]
+        )
+
+        unidad_destino = obtener_valor(
+            fila,
+            ["UNIDAD DESTINO"]
+        )
+
+        almacen_original = obtener_valor(
+            fila,
+            [
+                "ALMACÉN",
+                "ALMACEN",
+                "LUGAR DE ENTREGA"
+            ]
+        )
+
+        almacen = construir_almacen(
+            clues_destino,
+            unidad_destino,
+            almacen_original
+        )
+
+        proveedor = obtener_valor(
+            fila,
+            ["PROVEEDOR"]
+        )
+
+        orden = obtener_valor(
+            fila,
+            [
+                "ORDEN DE SUMINISTRO",
+                "ORDEN",
+                "NO. ORDEN"
+            ]
+        )
+
+        clave = obtener_valor(
+            fila,
+            [
+                "CLAVE CNIS",
+                "CLAVE",
+                "CLAVE INSUMO",
+                "CVE INSUMO"
+            ]
+        )
+
+        descripcion = obtener_valor(
+            fila,
+            [
+                "DESCRIPCIÓN",
+                "DESCRIPCION"
+            ]
+        )
+
+        piezas_emitidas = obtener_valor(
+            fila,
+            ["NO. DE PZAS. EMITIDAS"]
+        )
+
+        piezas_recibidas_ol = obtener_valor(
+            fila,
+            ["PZAS. RECIBIDAS POR O.L."]
+        )
+        piezas_entregadas_clues = obtener_valor(
+            fila,
+            ["PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"]
+        )
+
+        tipo_red = obtener_valor(
+            fila,
+            ["TIPO DE RED"]
+        )
+
+        grupo_terapeutico = obtener_valor(
+            fila,
+            [
+                "GRUPO TERAPEUTICO",
+                "GRUPO TERAPÉUTICO"
+            ]
+        )
+
+        estatus_base = obtener_valor(
+            fila,
+            ["ESTATUS_BASE"]
+        )
+
+        origen_compendio = obtener_valor(
+            fila,
+            ["ORIGEN_COMPENDIO"]
+        )
+
+        operador = obtener_valor(
+            fila,
+            [
+                "OPERADOR LOGÍSTICO",
+                "OPERADOR LOGISTICO"
+            ]
+        )
+
+        tiene_ol = es_operador_logistico(
+            tipo_entrega
+        )
+
+        estatus_recepcion_ol = ""
+
+        if tiene_ol:
+
+            estatus_recepcion_ol = calcular_estatus_piezas(
+                piezas_emitidas,
+                piezas_recibidas_ol
+            )
+
+        estatus_entrega_estado = calcular_estatus_piezas(
+            piezas_emitidas,
+            piezas_entregadas_clues
+        )
+
+        estatus_completa = calcular_estatus_incidencia_completa(
+            estatus_entrega_estado
+        )
+
+        estatus_incidencia_auto = (
+            "Resuelta"
+            if estatus_completa == "COMPLETA"
+            else "Pendiente"
+        )
+
+        incidencias.at[idx, "TIPO_ENTREGA"] = tipo_entrega
+        incidencias.at[idx, "ENTIDAD"] = entidad
+        incidencias.at[idx, "ALMACEN_CLUES_DESTINO"] = almacen
+        incidencias.at[idx, "CLUES_DESTINO"] = clues_destino
+        incidencias.at[idx, "UNIDAD_DESTINO"] = unidad_destino
+        incidencias.at[idx, "PROVEEDOR"] = proveedor
+        incidencias.at[idx, "ORDEN"] = orden
+        incidencias.at[idx, "CLAVE_CNIS"] = clave
+        incidencias.at[idx, "DESCRIPCION"] = descripcion
+        incidencias.at[idx, "TIPO_RED"] = tipo_red
+        incidencias.at[idx, "GRUPO_TERAPEUTICO"] = grupo_terapeutico
+        incidencias.at[idx, "ESTATUS_OPERATIVO"] = estatus_base
+        incidencias.at[idx, "PIEZAS_EMITIDAS"] = piezas_emitidas
+        incidencias.at[idx, "PIEZAS_RECIBIDAS_OL"] = piezas_recibidas_ol
+        incidencias.at[idx, "PIEZAS_ENTREGADAS_CLUES"] = piezas_entregadas_clues
+        incidencias.at[idx, "ESTATUS_RECEPCION_OL"] = estatus_recepcion_ol
+        incidencias.at[idx, "ESTATUS_ENTREGA_ESTADO"] = estatus_entrega_estado
+        incidencias.at[idx, "ESTATUS_INCIDENCIA_COMPLETA"] = estatus_completa
+        incidencias.at[idx, "ESTATUS_INCIDENCIA"] = estatus_incidencia_auto
+        incidencias.at[idx, "OPERADOR_LOGISTICO"] = operador
+        incidencias.at[idx, "ESTATUS_BASE"] = estatus_base
+        incidencias.at[idx, "ORIGEN_COMPENDIO"] = origen_compendio
+
+    incidencias = incidencias.drop(
+        columns=[
+            "_ORDEN_CRUCE"
+        ],
+        errors="ignore"
+    )
+
+    return incidencias
+
+
 # =========================
 # APP
 # =========================
 
-@st.cache_data(
-    ttl=600,
-    show_spinner="Sincronizando archivos desde Google Drive..."
+st.title(
+    "📌 Reporteador de Incidencias 2026"
 )
-def sincronizar_archivos_drive_cache():
-
-    sincronizar_archivos_drive()
-
-    return True
-
-
-sincronizar_archivos_drive_cache()
-
-st.title("📌 Reporteador de Incidencias 2026")
 
 st.caption(
     "Sistema operativo IMSS-BIENESTAR para seguimiento de incidencias."
 )
 
-st.sidebar.title("⚙️ Panel de control")
-
-forzar_actualizacion = st.sidebar.button(
-    "🔄 Actualizar desde Drive"
+st.sidebar.title(
+    "⚙️ Panel de control"
 )
 
-if forzar_actualizacion:
+actualizar_parquet = st.sidebar.button(
+    "🔄 Actualizar base ligera desde compendio"
+)
 
-    st.cache_data.clear()
+if actualizar_parquet:
 
-    sincronizar_archivos_drive_cache()
+    with st.spinner(
+        "Generando base ligera desde el compendio..."
+    ):
+
+        generar_base_ligera_desde_xlsb()
+
+        st.cache_data.clear()
+
+        sincronizar_archivos_drive()
+
+    st.success(
+        "Base ligera actualizada correctamente."
+    )
+
+    st.rerun()
 
 base = cargar_compendio_ligero()
 
@@ -1413,9 +1787,18 @@ menu = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.caption(f"Registros base: {len(base):,}")
-st.sidebar.caption(f"Incidencias: {len(incidencias):,}")
-st.sidebar.caption("Fuente: Google Drive")
+
+st.sidebar.caption(
+    f"Registros base: {len(base):,}"
+)
+
+st.sidebar.caption(
+    f"Incidencias: {len(incidencias):,}"
+)
+
+st.sidebar.caption(
+    "Fuente: Google Drive"
+)
 
 
 # =========================
@@ -1424,16 +1807,22 @@ st.sidebar.caption("Fuente: Google Drive")
 
 if menu == "Dashboard":
 
-    st.subheader("📊 Dashboard ejecutivo")
+    st.subheader(
+        "📊 Dashboard ejecutivo"
+    )
 
-    total = len(incidencias)
+    total = len(
+        incidencias
+    )
 
     completas = incidencias[
-        incidencias["ESTATUS_INCIDENCIA_COMPLETA"] == "COMPLETA"
+        incidencias["ESTATUS_INCIDENCIA_COMPLETA"]
+        == "COMPLETA"
     ].shape[0]
 
     incompletas = incidencias[
-        incidencias["ESTATUS_INCIDENCIA_COMPLETA"] == "INCOMPLETA"
+        incidencias["ESTATUS_INCIDENCIA_COMPLETA"]
+        == "INCOMPLETA"
     ].shape[0]
 
     resueltas = completas
@@ -1448,13 +1837,34 @@ if menu == "Dashboard":
             2
         )
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5 = st.columns(
+        5
+    )
 
-    c1.metric("Incidencias", total)
-    c2.metric("Resueltas", resueltas)
-    c3.metric("Incompletas", incompletas)
-    c4.metric("Activas", activas)
-    c5.metric("% resolución", f"{porcentaje}%")
+    c1.metric(
+        "Incidencias",
+        total
+    )
+
+    c2.metric(
+        "Resueltas",
+        resueltas
+    )
+
+    c3.metric(
+        "Incompletas",
+        incompletas
+    )
+
+    c4.metric(
+        "Activas",
+        activas
+    )
+
+    c5.metric(
+        "% resolución",
+        f"{porcentaje}%"
+    )
 
     st.divider()
 
@@ -1466,7 +1876,9 @@ if menu == "Dashboard":
             "🎯 Atribuible a"
         )
 
-        c1, c2 = st.columns(2)
+        c1, c2 = st.columns(
+            2
+        )
 
         with c1:
 
@@ -1500,7 +1912,9 @@ if menu == "Dashboard":
 
         st.divider()
 
-        st.subheader("📋 Base de incidencias")
+        st.subheader(
+            "📋 Base de incidencias"
+        )
 
         st.dataframe(
             incidencias,
@@ -1509,7 +1923,9 @@ if menu == "Dashboard":
 
     else:
 
-        st.info("Aún no hay incidencias registradas.")
+        st.info(
+            "Aún no hay incidencias registradas."
+        )
 
 
 # =========================
@@ -1518,7 +1934,9 @@ if menu == "Dashboard":
 
 elif menu == "Registrar incidencia":
 
-    st.subheader("📝 Registrar incidencia")
+    st.subheader(
+        "📝 Registrar incidencia"
+    )
 
     valor_busqueda = st.text_input(
         "Orden de suministro",
@@ -1534,7 +1952,9 @@ elif menu == "Registrar incidencia":
 
         if len(resultado) == 0:
 
-            st.warning("No encontré esa orden exacta.")
+            st.warning(
+                "No encontré esa orden exacta."
+            )
 
             sugerencias = sugerir_ordenes(
                 base,
@@ -1556,7 +1976,7 @@ elif menu == "Registrar incidencia":
 
                 st.error(
                     "No encontré coincidencias ni en activas ni en canceladas. "
-                    "Actualiza desde Drive y vuelve a intentar."
+                    "Actualiza la base ligera y vuelve a intentar."
                 )
 
         else:
@@ -1578,7 +1998,9 @@ elif menu == "Registrar incidencia":
                 )
 
                 resultado = resultado.drop(
-                    columns=["_PRIORIDAD_VISUAL"],
+                    columns=[
+                        "_PRIORIDAD_VISUAL"
+                    ],
                     errors="ignore"
                 )
 
@@ -1586,15 +2008,21 @@ elif menu == "Registrar incidencia":
 
             estatus_base = obtener_valor(
                 fila,
-                ["ESTATUS_BASE"]
+                [
+                    "ESTATUS_BASE"
+                ]
             )
 
             origen_compendio = obtener_valor(
                 fila,
-                ["ORIGEN_COMPENDIO"]
+                [
+                    "ORIGEN_COMPENDIO"
+                ]
             )
 
-            if str(estatus_base).upper().strip() == "INACTIVA":
+            if str(
+                estatus_base
+            ).upper().strip() == "INACTIVA":
 
                 st.error(
                     "🚫 Esta orden está CANCELADA / INACTIVA en el compendio."
@@ -1610,14 +2038,20 @@ elif menu == "Registrar incidencia":
                 f"Resultados encontrados: {len(resultado)}"
             )
 
-            st.subheader("📋 Datos encontrados en compendio")
+            st.subheader(
+                "📋 Datos encontrados en compendio"
+            )
 
             st.dataframe(
-                resultado.head(50),
+                resultado.head(
+                    50
+                ),
                 use_container_width=True
             )
 
-            with st.expander("🔎 Ver todos los datos completos del compendio"):
+            with st.expander(
+                "🔎 Ver todos los datos completos del compendio"
+            ):
 
                 st.dataframe(
                     resultado,
@@ -1659,7 +2093,9 @@ elif menu == "Registrar incidencia":
 
             tipo_entrega = obtener_valor(
                 fila,
-                ["TIPO DE ENTREGA"]
+                [
+                    "TIPO DE ENTREGA"
+                ]
             )
 
             entidad = obtener_valor(
@@ -1680,7 +2116,9 @@ elif menu == "Registrar incidencia":
 
             unidad_destino = obtener_valor(
                 fila,
-                ["UNIDAD DESTINO"]
+                [
+                    "UNIDAD DESTINO"
+                ]
             )
 
             almacen_original = obtener_valor(
@@ -1700,7 +2138,9 @@ elif menu == "Registrar incidencia":
 
             proveedor = obtener_valor(
                 fila,
-                ["PROVEEDOR"]
+                [
+                    "PROVEEDOR"
+                ]
             )
 
             clave = obtener_valor(
@@ -1723,17 +2163,23 @@ elif menu == "Registrar incidencia":
 
             piezas_emitidas = obtener_valor(
                 fila,
-                ["NO. DE PZAS. EMITIDAS"]
+                [
+                    "NO. DE PZAS. EMITIDAS"
+                ]
             )
 
             piezas_recibidas_ol = obtener_valor(
                 fila,
-                ["PZAS. RECIBIDAS POR O.L."]
+                [
+                    "PZAS. RECIBIDAS POR O.L."
+                ]
             )
 
             piezas_entregadas = obtener_valor(
                 fila,
-                ["PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"]
+                [
+                    "PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"
+                ]
             )
 
             operador = obtener_valor(
@@ -1746,7 +2192,9 @@ elif menu == "Registrar incidencia":
 
             tipo_red = obtener_valor(
                 fila,
-                ["TIPO DE RED"]
+                [
+                    "TIPO DE RED"
+                ]
             )
 
             grupo_terapeutico = obtener_valor(
@@ -1789,7 +2237,9 @@ elif menu == "Registrar incidencia":
 
             st.divider()
 
-            st.subheader("📅 Agenda de cita")
+            st.subheader(
+                "📅 Agenda de cita"
+            )
 
             if cita is None:
 
@@ -1825,7 +2275,9 @@ elif menu == "Registrar incidencia":
                     )
                 )
 
-                c_ag1, c_ag2, c_ag3, c_ag4 = st.columns(4)
+                c_ag1, c_ag2, c_ag3, c_ag4 = st.columns(
+                    4
+                )
 
                 c_ag1.text_input(
                     "Última cita",
@@ -1855,30 +2307,91 @@ elif menu == "Registrar incidencia":
 
             st.divider()
 
-            st.subheader("🔒 Información del compendio")
+            st.subheader(
+                "🔒 Información del compendio"
+            )
 
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3 = st.columns(
+                3
+            )
 
-            c1.text_input("Entidad", entidad, disabled=True)
-            c2.text_input("Almacén / CLUES destino", almacen, disabled=True)
-            c3.text_input("Proveedor", proveedor, disabled=True)
+            c1.text_input(
+                "Entidad",
+                entidad,
+                disabled=True
+            )
 
-            c4, c5, c6 = st.columns(3)
+            c2.text_input(
+                "Almacén / CLUES destino",
+                almacen,
+                disabled=True
+            )
 
-            c4.text_input("Orden", orden, disabled=True)
-            c5.text_input("Clave CNIS", clave, disabled=True)
-            c6.text_input("Tipo de entrega", tipo_entrega, disabled=True)
+            c3.text_input(
+                "Proveedor",
+                proveedor,
+                disabled=True
+            )
 
-            c7, c8, c9 = st.columns(3)
+            c4, c5, c6 = st.columns(
+                3
+            )
 
-            c7.text_input("Estatus base", estatus_base, disabled=True)
-            c8.text_input("Origen compendio", origen_compendio, disabled=True)
-            c9.text_input("Estatus orden", estatus_orden_compendio, disabled=True)
+            c4.text_input(
+                "Orden",
+                orden,
+                disabled=True
+            )
 
-            c10, c11 = st.columns(2)
+            c5.text_input(
+                "Clave CNIS",
+                clave,
+                disabled=True
+            )
 
-            c10.text_input("Tipo de red", tipo_red, disabled=True)
-            c11.text_input("Grupo terapéutico", grupo_terapeutico, disabled=True)
+            c6.text_input(
+                "Tipo de entrega",
+                tipo_entrega,
+                disabled=True
+            )
+
+            c7, c8, c9 = st.columns(
+                3
+            )
+
+            c7.text_input(
+                "Estatus base",
+                estatus_base,
+                disabled=True
+            )
+
+            c8.text_input(
+                "Origen compendio",
+                origen_compendio,
+                disabled=True
+            )
+
+            c9.text_input(
+                "Estatus orden",
+                estatus_orden_compendio,
+                disabled=True
+            )
+
+            c10, c11 = st.columns(
+                2
+            )
+
+            c10.text_input(
+                "Tipo de red",
+                tipo_red,
+                disabled=True
+            )
+
+            c11.text_input(
+                "Grupo terapéutico",
+                grupo_terapeutico,
+                disabled=True
+            )
 
             st.text_area(
                 "Descripción",
@@ -1886,17 +2399,34 @@ elif menu == "Registrar incidencia":
                 disabled=True
             )
 
-            st.subheader("🚚 Validación logística")
+            st.subheader(
+                "🚚 Validación logística"
+            )
 
             if tiene_ol:
 
-                c12, c13, c14 = st.columns(3)
+                c12, c13, c14 = st.columns(
+                    3
+                )
 
-                c12.metric("Piezas emitidas", piezas_emitidas)
-                c13.metric("Piezas recibidas OL", piezas_recibidas_ol)
-                c14.metric("Piezas entregadas CLUES", piezas_entregadas)
+                c12.metric(
+                    "Piezas emitidas",
+                    piezas_emitidas
+                )
 
-                c15, c16 = st.columns(2)
+                c13.metric(
+                    "Piezas recibidas OL",
+                    piezas_recibidas_ol
+                )
+
+                c14.metric(
+                    "Piezas entregadas CLUES",
+                    piezas_entregadas
+                )
+
+                c15, c16 = st.columns(
+                    2
+                )
 
                 c15.text_input(
                     "Estatus recepción OL",
@@ -1912,10 +2442,19 @@ elif menu == "Registrar incidencia":
 
             else:
 
-                c12, c13 = st.columns(2)
+                c12, c13 = st.columns(
+                    2
+                )
 
-                c12.metric("Piezas emitidas", piezas_emitidas)
-                c13.metric("Piezas entregadas CLUES", piezas_entregadas)
+                c12.metric(
+                    "Piezas emitidas",
+                    piezas_emitidas
+                )
+
+                c13.metric(
+                    "Piezas entregadas CLUES",
+                    piezas_entregadas
+                )
 
                 st.text_input(
                     "Estatus entrega",
@@ -1931,9 +2470,13 @@ elif menu == "Registrar incidencia":
 
             st.divider()
 
-            st.subheader("✍️ Captura de incidencia")
+            st.subheader(
+                "✍️ Captura de incidencia"
+            )
 
-            c17, c18, c19 = st.columns(3)
+            c17, c18, c19 = st.columns(
+                3
+            )
 
             with c17:
 
@@ -1962,26 +2505,38 @@ elif menu == "Registrar incidencia":
                     ]
                 )
 
-            responsable = st.text_input("Responsable")
+            responsable = st.text_input(
+                "Responsable"
+            )
 
-            observaciones = st.text_area("Observaciones")
+            observaciones = st.text_area(
+                "Observaciones"
+            )
 
-            st.subheader("📎 Evidencias")
+            st.subheader(
+                "📎 Evidencias"
+            )
 
-            c20, c21 = st.columns(2)
+            c20, c21 = st.columns(
+                2
+            )
 
             with c20:
 
                 cedula_rechazo = st.file_uploader(
                     "Cédula rechazo PDF",
-                    type=["pdf"]
+                    type=[
+                        "pdf"
+                    ]
                 )
 
             with c21:
 
                 correo_seguimiento = st.file_uploader(
                     "Correo seguimiento PDF",
-                    type=["pdf"]
+                    type=[
+                        "pdf"
+                    ]
                 )
 
             guardar = st.button(
@@ -2058,7 +2613,9 @@ elif menu == "Registrar incidencia":
 
 elif menu == "Seguimiento":
 
-    st.subheader("📋 Seguimiento")
+    st.subheader(
+        "📋 Seguimiento"
+    )
 
     st.dataframe(
         incidencias,
@@ -2072,7 +2629,9 @@ elif menu == "Seguimiento":
 
 elif menu == "Base ligera":
 
-    st.subheader("⚡ Base ligera")
+    st.subheader(
+        "⚡ Base ligera"
+    )
 
     st.dataframe(
         base.head(100),

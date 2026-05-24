@@ -1,0 +1,116 @@
+import pandas as pd
+
+ARCHIVO_COMPENDIO = "CompendioAbasto25-26_22.05.2026.xlsb"
+SALIDA = "base_compendio_ligera.parquet"
+
+columnas_utiles = [
+    "ORIGEN_COMPENDIO",
+    "ESTATUS_BASE",
+    "TIPO DE ENTREGA",
+    "ENTIDAD",
+    "ESTADO",
+    "CLUES DESTINO",
+    "CVE CLUES DESTINO",
+    "UNIDAD DESTINO",
+    "ALMACÉN",
+    "ALMACEN",
+    "LUGAR DE ENTREGA",
+    "PROVEEDOR",
+    "ORDEN",
+    "ORDEN DE SUMINISTRO",
+    "NO. ORDEN",
+    "CLAVE",
+    "CLAVE CNIS",
+    "CLAVE INSUMO",
+    "CVE INSUMO",
+    "CLAVE DEL INSUMO",
+    "DESCRIPCIÓN",
+    "DESCRIPCION",
+    "PIEZAS",
+    "CANTIDAD",
+    "TIPO DE RED",
+    "GRUPO TERAPEUTICO",
+    "GRUPO TERAPÉUTICO",
+    "ESTATUS",
+    "ESTATUS DE LA ORDEN DE SUMINISTRO",
+    "OPERADOR LOGÍSTICO",
+    "OPERADOR LOGISTICO",
+    "NO. DE PZAS. EMITIDAS",
+    "PZAS. RECIBIDAS POR O.L.",
+    "PIEZAS REPORTADAS COMO ENTREGADAS CLUES DESTINO"
+]
+
+data = pd.read_excel(
+    ARCHIVO_COMPENDIO,
+    sheet_name="DATA",
+    engine="pyxlsb"
+)
+
+canceladas = pd.read_excel(
+    ARCHIVO_COMPENDIO,
+    sheet_name="CANCELADAS",
+    engine="pyxlsb"
+)
+
+data.columns = (
+    data.columns
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+canceladas.columns = (
+    canceladas.columns
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+canceladas = canceladas.rename(
+    columns={
+        "NÚMERO DE ORDEN DE SUMINISTRO": "ORDEN DE SUMINISTRO",
+        "NUMERO DE ORDEN DE SUMINISTRO": "ORDEN DE SUMINISTRO",
+        "RAZÓN SOCIAL": "PROVEEDOR",
+        "RAZON SOCIAL": "PROVEEDOR",
+        "CLAVE DEL MEDICAMENTO": "CLAVE CNIS",
+        "MEDICAMENTO": "DESCRIPCIÓN",
+        "CLUES DE DESTINO": "CLUES DESTINO",
+        "ENTIDAD DE DESTINO": "ENTIDAD",
+        "NOMBRE DE LA UNIDAD": "UNIDAD DESTINO",
+        "ALMACÉN DE ENTREGA": "LUGAR DE ENTREGA",
+        "ALMACEN DE ENTREGA": "LUGAR DE ENTREGA",
+        "CANTIDAD SOLICITADA": "NO. DE PZAS. EMITIDAS",
+        "DESCRIPCIÓN DEL ESTATUS DE LA ORDEN DE SUMINISTRO": "ESTATUS DE LA ORDEN DE SUMINISTRO",
+        "DESCRIPCION DEL ESTATUS DE LA ORDEN DE SUMINISTRO": "ESTATUS DE LA ORDEN DE SUMINISTRO"
+    }
+)
+
+data["ESTATUS_BASE"] = "ACTIVA"
+canceladas["ESTATUS_BASE"] = "INACTIVA"
+
+data["ORIGEN_COMPENDIO"] = "DATA"
+canceladas["ORIGEN_COMPENDIO"] = "CANCELADAS"
+
+base = pd.concat(
+    [
+        data,
+        canceladas
+    ],
+    ignore_index=True
+)
+
+for columna in columnas_utiles:
+
+    if columna not in base.columns:
+        base[columna] = ""
+
+base = base[
+    columnas_utiles
+].copy()
+
+base.to_parquet(
+    SALIDA,
+    index=False
+)
+
+print(f"Base ligera creada correctamente: {SALIDA}")
