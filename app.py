@@ -836,11 +836,12 @@ def cargar_compendio_ligero():
         RUTA_PARQUET
     ):
 
-        with st.spinner(
-            "No encontré base ligera. Generándola desde el compendio..."
-        ):
-
-            generar_base_ligera_desde_xlsb()
+        descargar_por_nombre(
+            ARCHIVO_PARQUET,
+            FOLDER_ID_BASES,
+            RUTA_PARQUET,
+            obligatorio=True
+        )
 
     return pd.read_parquet(
         RUTA_PARQUET
