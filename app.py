@@ -927,6 +927,16 @@ def obtener_cita_agenda(
 
     agenda = agenda.copy()
 
+    agenda.columns = (
+        agenda.columns
+        .astype(str)
+        .str.strip()
+    )
+
+    if "orden_suministro" not in agenda.columns:
+
+        return None
+
     agenda["orden_suministro"] = (
         agenda["orden_suministro"]
         .astype(str)
@@ -958,14 +968,20 @@ def obtener_incidencias_previas(
 
         return pd.DataFrame()
 
+    incidencias = incidencias.copy()
+
+    incidencias.columns = (
+        incidencias.columns
+        .astype(str)
+        .str.strip()
+    )
+
     if "orden_suministro" not in incidencias.columns:
 
         return pd.DataFrame()
 
-    temp = incidencias.copy()
-
-    temp["orden_suministro"] = (
-        temp["orden_suministro"]
+    incidencias["orden_suministro"] = (
+        incidencias["orden_suministro"]
         .astype(str)
         .apply(normalizar_orden)
     )
@@ -974,8 +990,8 @@ def obtener_incidencias_previas(
         orden
     )
 
-    previas = temp[
-        temp["orden_suministro"]
+    return incidencias[
+        incidencias["orden_suministro"]
         ==
         orden_norm
     ]
@@ -1575,7 +1591,10 @@ elif menu == "Registrar incidencia":
                     fecha_cita = obtener_valor(
                         cita,
                         [
-                            "FECHA  DE CITA AGENDA"
+                            "FECHA  DE CITA AGENDA",
+                            "fecha_de_cita_agenda",
+                            "fecha_cita",
+                            "Fecha  de cita agenda"
                         ]
                     )
 
