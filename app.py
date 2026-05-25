@@ -852,7 +852,6 @@ def cargar_incidencias():
             incidencias.columns
             .astype(str)
             .str.strip()
-            .str.upper()
         )
 
         for columna, valor_default in columnas_necesarias.items():
@@ -886,15 +885,14 @@ def cargar_agenda_citas():
         agenda.columns
         .astype(str)
         .str.strip()
-        .str.upper()
     )
 
-    if "ORDEN DE SUMINISTRO" not in agenda.columns:
+    if "orden_suministro" not in agenda.columns:
 
         return pd.DataFrame()
 
     agenda["_ORDEN_BUSQUEDA"] = agenda[
-        "ORDEN DE SUMINISTRO"
+        "orden_suministro"
     ].apply(
         normalizar_orden
     )
@@ -927,12 +925,22 @@ def obtener_cita_agenda(
 
         return None
 
+    agenda = agenda.copy()
+
+    agenda["orden_suministro"] = (
+        agenda["orden_suministro"]
+        .astype(str)
+        .apply(normalizar_orden)
+    )
+
     orden_norm = normalizar_orden(
         orden
     )
 
     encontrado = agenda[
-        agenda["_ORDEN_BUSQUEDA"] == orden_norm
+        agenda["orden_suministro"]
+        ==
+        orden_norm
     ]
 
     if encontrado.empty:
@@ -940,7 +948,6 @@ def obtener_cita_agenda(
         return None
 
     return encontrado.iloc[0]
-
 
 def obtener_incidencias_previas(
     incidencias,
@@ -951,24 +958,31 @@ def obtener_incidencias_previas(
 
         return pd.DataFrame()
 
-    if "ORDEN" not in incidencias.columns:
+    if "orden_suministro" not in incidencias.columns:
 
         return pd.DataFrame()
+
+    temp = incidencias.copy()
+
+    temp["orden_suministro"] = (
+        temp["orden_suministro"]
+        .astype(str)
+        .apply(normalizar_orden)
+    )
 
     orden_norm = normalizar_orden(
         orden
     )
 
-    previas = incidencias[
-        incidencias["ORDEN"]
-        .astype(str)
-        .apply(normalizar_orden)
+    previas = temp[
+        temp["orden_suministro"]
         ==
         orden_norm
     ]
 
     return previas
 
+    return pd.DataFrame()
 
 def guardar_incidencia(
     nueva
@@ -1846,6 +1860,7 @@ elif menu == "Registrar incidencia":
                     "FECHA_REGISTRO": datetime.now(),
                     "ORIGEN_REGISTRO": "SISTEMA",
                     "ORDEN_BUSCADA": valor_busqueda,
+                    "orden_suministro": orden,
                     "ORDEN": orden,
                     "TIPO_ENTREGA": tipo_entrega,
                     "ENTIDAD": entidad,
