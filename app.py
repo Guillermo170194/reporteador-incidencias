@@ -144,7 +144,6 @@ def buscar_archivo_drive(
 
     query = (
         f"name = '{nombre_archivo}' "
-        f"and '{folder_id}' in parents "
         f"and trashed = false"
     )
 
@@ -152,7 +151,8 @@ def buscar_archivo_drive(
         drive_service.files()
         .list(
             q=query,
-            fields="files(id, name)",
+            fields="files(id, name, parents)",
+            corpora="allDrives",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True
         )
@@ -164,11 +164,18 @@ def buscar_archivo_drive(
         []
     )
 
-    if len(archivos) == 0:
+    for archivo in archivos:
 
-        return None
+        padres = archivo.get(
+            "parents",
+            []
+        )
 
-    return archivos[0]
+        if folder_id in padres:
+
+            return archivo
+
+    return None
 
 
 def descargar_archivo_drive(
