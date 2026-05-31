@@ -358,7 +358,6 @@ def sincronizar_archivos_drive():
     return True
 
 
-sincronizar_archivos_drive()
 # =========================
 # COLORES
 # =========================
@@ -868,6 +867,10 @@ def sugerir_ordenes(
 # CARGAR DATOS
 # =========================
 
+@st.cache_data(
+    ttl=300,
+    show_spinner="Cargando incidencias desde Supabase..."
+)
 def cargar_incidencias():
 
     columnas_necesarias = {
@@ -1007,6 +1010,115 @@ def cargar_incidencias():
     return incidencias[
         columnas_ordenadas + otras_columnas
     ]
+
+
+
+@st.cache_data(
+    ttl=300,
+    show_spinner="Cargando resumen ejecutivo..."
+)
+def cargar_resumen_incidencias():
+
+    incidencias_temp = cargar_incidencias()
+
+    total = len(
+        incidencias_temp
+    )
+
+    if total == 0:
+
+        return {
+            "total": 0,
+            "completas": 0,
+            "incompletas": 0,
+            "resueltas": 0,
+            "porcentaje": 0
+        }
+
+    completas = incidencias_temp[
+        incidencias_temp["ESTATUS_INCIDENCIA_COMPLETA"]
+        .astype(str)
+        .str.upper()
+        .eq("COMPLETA")
+    ].shape[0]
+
+    incompletas = incidencias_temp[
+        incidencias_temp["ESTATUS_INCIDENCIA_COMPLETA"]
+        .astype(str)
+        .str.upper()
+        .eq("INCOMPLETA")
+    ].shape[0]
+
+    resueltas = incidencias_temp[
+        incidencias_temp["ESTATUS_INCIDENCIA"]
+        .astype(str)
+        .str.upper()
+        .eq("RESUELTA")
+    ].shape[0]
+
+    porcentaje = 0
+
+    if total > 0:
+
+        porcentaje = round(
+            (resueltas / total) * 100,
+            2
+        )
+
+    return {
+        "total": total,
+        "completas": completas,
+        "incompletas": incompletas,
+        "resueltas": resueltas,
+        "porcentaje": porcentaje
+    }
+
+
+@st.cache_data(
+    ttl=300,
+    show_spinner="Cargando últimos registros..."
+)
+def cargar_incidencias_recientes(
+    limite=300
+):
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "incidencias"
+            )
+            .select(
+                "*"
+            )
+            .order(
+                "id",
+                desc=True
+            )
+            .limit(
+                limite
+            )
+            .execute()
+        )
+
+        datos = respuesta.data
+
+        if not datos:
+
+            return pd.DataFrame()
+
+        return pd.DataFrame(
+            datos
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"No se pudieron cargar recientes desde Supabase: {e}"
+        )
+
+        return pd.DataFrame()
 
 
 def cargar_agenda_citas():
@@ -1549,65 +1661,8 @@ st.sidebar.success(
 
 
 # =========================
-# CARGAR BASES
+# MENÚ
 # =========================
-
-incidencias = cargar_incidencias()
-
-agenda_citas = cargar_agenda_citas()
-
-
-# =========================
-# DEBUG TEMPORAL
-# =========================
-
-st.sidebar.markdown("---")
-
-st.sidebar.write(
-    "Agenda filas:",
-    len(agenda_citas)
-)
-
-st.sidebar.write(
-    "Incidencias Supabase filas:",
-    len(incidencias)
-)
-
-if not agenda_citas.empty:
-
-    st.sidebar.write(
-        "Columnas agenda:"
-    )
-
-    st.sidebar.write(
-        agenda_citas.columns.tolist()
-    )
-
-    if "_ORDEN_BUSQUEDA" in agenda_citas.columns:
-
-        st.sidebar.write(
-            "Primeras órdenes agenda:"
-        )
-
-        st.sidebar.write(
-            agenda_citas[
-                [
-                    "_ORDEN_BUSQUEDA"
-                ]
-            ]
-            .head(20)
-        )
-
-if not incidencias.empty:
-
-    st.sidebar.write(
-        "Columnas incidencias:"
-    )
-
-    st.sidebar.write(
-        incidencias.columns.tolist()
-    )
-
 
 menu = st.sidebar.radio(
     "Menú",
@@ -1618,6 +1673,46 @@ menu = st.sidebar.radio(
         "Base Supabase"
     ]
 )
+
+
+# =========================
+# CARGA INTELIGENTE
+# =========================
+
+agenda_citas = pd.DataFrame()
+
+if menu == "Registrar incidencia":
+
+    sincronizar_archivos_drive()
+
+    agenda_citas = cargar_agenda_citas()
+
+incidencias = cargar_incidencias()
+
+st.sidebar.markdown("---")
+
+st.sidebar.write(
+    "Incidencias Supabase filas:",
+    len(incidencias)
+)
+
+if menu == "Registrar incidencia":
+
+    st.sidebar.write(
+        "Agenda filas:",
+        len(agenda_citas)
+    )
+
+    if not agenda_citas.empty:
+
+        st.sidebar.write(
+            "Columnas agenda:"
+        )
+
+        st.sidebar.write(
+            agenda_citas.columns.tolist()
+        )
+
 
 st.sidebar.divider()
 
@@ -1640,8 +1735,11 @@ if menu == "Dashboard":
         "📊 Dashboard ejecutivo"
     )
 
-    total = len(
-        incidencias
+    resumen = cargar_resumen_incidencias()
+
+    total = resumen.get(
+        "total",
+        0
     )
 
     if total == 0:
@@ -1651,32 +1749,6 @@ if menu == "Dashboard":
         )
 
     else:
-
-        completas = incidencias[
-            incidencias["ESTATUS_INCIDENCIA_COMPLETA"]
-            == "COMPLETA"
-        ].shape[0]
-
-        incompletas = incidencias[
-            incidencias["ESTATUS_INCIDENCIA_COMPLETA"]
-            == "INCOMPLETA"
-        ].shape[0]
-
-        resueltas = incidencias[
-            incidencias["ESTATUS_INCIDENCIA"]
-            .astype(str)
-            .str.upper()
-            .eq("RESUELTA")
-        ].shape[0]
-
-        porcentaje = 0
-
-        if total > 0:
-
-            porcentaje = round(
-                (resueltas / total) * 100,
-                2
-            )
 
         c1, c2, c3, c4 = st.columns(
             4
@@ -1689,37 +1761,76 @@ if menu == "Dashboard":
 
         c2.metric(
             "Resueltas",
-            resueltas
+            resumen.get(
+                "resueltas",
+                0
+            )
         )
 
         c3.metric(
             "Incompletas",
-            incompletas
+            resumen.get(
+                "incompletas",
+                0
+            )
         )
 
         c4.metric(
             "% resolución",
-            f"{porcentaje}%"
+            f"{resumen.get('porcentaje', 0)}%"
         )
 
         st.divider()
 
-        st.dataframe(
-            incidencias,
-            use_container_width=True
+        st.subheader(
+            "Últimas incidencias registradas"
         )
 
-        excel = convertir_excel(
-            incidencias
+        recientes = cargar_incidencias_recientes(
+            300
         )
 
-        st.download_button(
-            label="⬇️ Descargar incidencias en Excel",
-            data=excel,
-            file_name="reporte_incidencias.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+        if recientes.empty:
+
+            st.info(
+                "No hay registros recientes para mostrar."
+            )
+
+        else:
+
+            st.dataframe(
+                recientes,
+                use_container_width=True
+            )
+
+        st.divider()
+
+        with st.expander(
+            "⬇️ Exportar base completa de incidencias"
+        ):
+
+            st.caption(
+                "La exportación carga toda la tabla solo cuando abres esta sección."
+            )
+
+            if st.button(
+                "Preparar Excel completo",
+                use_container_width=True
+            ):
+
+                incidencias_export = cargar_incidencias()
+
+                excel = convertir_excel(
+                    incidencias_export
+                )
+
+                st.download_button(
+                    label="⬇️ Descargar incidencias en Excel",
+                    data=excel,
+                    file_name="reporte_incidencias.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
 
 
 # =========================
@@ -2315,6 +2426,8 @@ elif menu == "Registrar incidencia":
                 st.success(
                     "Incidencia guardada correctamente."
                 )
+
+                st.cache_data.clear()
 
                 st.rerun()
 
