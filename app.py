@@ -7,6 +7,7 @@ import os
 import json
 import tempfile
 
+from io import BytesIO
 from datetime import datetime
 from supabase import create_client
 from google.oauth2 import service_account
@@ -345,13 +346,8 @@ def subir_archivo_drive(
 
 def sincronizar_archivos_drive():
 
-    descargar_por_nombre(
-        ARCHIVO_INCIDENCIAS,
-        FOLDER_ID_INCIDENCIAS,
-        RUTA_INCIDENCIAS,
-        obligatorio=False
-    )
-
+    # Solo se descarga agenda desde Drive.
+    # Las incidencias viven en Supabase.
     descargar_por_nombre(
         ARCHIVO_AGENDA,
         FOLDER_ID_BASES,
@@ -875,8 +871,9 @@ def sugerir_ordenes(
 def cargar_incidencias():
 
     columnas_necesarias = {
+        "ID": "",
         "FECHA_REGISTRO": "",
-        "ORIGEN_REGISTRO": "BASE HISTÓRICA",
+        "ORIGEN_REGISTRO": "BASE SUPABASE",
         "ORDEN_BUSCADA": "",
         "orden_suministro": "",
         "TIPO_ENTREGA": "",
@@ -906,37 +903,110 @@ def cargar_incidencias():
         "RESPONSABLE": "",
         "OBSERVACIONES": "",
         "PDF_CEDULA_RECHAZO": "",
-        "PDF_CORREO_SEGUIMIENTO": ""
+        "PDF_CORREO_SEGUIMIENTO": "",
+        "CREADO_EN": ""
     }
 
-    if os.path.exists(
-        RUTA_INCIDENCIAS
-    ):
+    try:
 
-        incidencias = pd.read_excel(
-            RUTA_INCIDENCIAS
+        respuesta = (
+            supabase
+            .table(
+                "incidencias"
+            )
+            .select(
+                "*"
+            )
+            .order(
+                "id",
+                desc=True
+            )
+            .limit(
+                10000
+            )
+            .execute()
         )
 
-        incidencias.columns = (
-            incidencias.columns
-            .astype(str)
-            .str.strip()
+        datos = respuesta.data
+
+    except Exception as e:
+
+        st.error(
+            f"No se pudieron cargar incidencias desde Supabase: {e}"
         )
 
-        for columna, valor_default in columnas_necesarias.items():
+        datos = []
 
-            if columna not in incidencias.columns:
+    if not datos:
 
-                incidencias[columna] = valor_default
-
-        return incidencias
-
-    return pd.DataFrame(
-        columns=list(
-            columnas_necesarias.keys()
+        return pd.DataFrame(
+            columns=list(
+                columnas_necesarias.keys()
+            )
         )
+
+    incidencias = pd.DataFrame(
+        datos
     )
 
+    renombres = {
+        "id": "ID",
+        "fecha_registro": "FECHA_REGISTRO",
+        "origen_registro": "ORIGEN_REGISTRO",
+        "orden_buscada": "ORDEN_BUSCADA",
+        "tipo_entrega": "TIPO_ENTREGA",
+        "entidad": "ENTIDAD",
+        "almacen_clues_destino": "ALMACEN_CLUES_DESTINO",
+        "clues_destino": "CLUES_DESTINO",
+        "unidad_destino": "UNIDAD_DESTINO",
+        "proveedor": "PROVEEDOR",
+        "orden": "ORDEN",
+        "clave_cnis": "CLAVE_CNIS",
+        "descripcion": "DESCRIPCION",
+        "piezas_emitidas": "PIEZAS_EMITIDAS",
+        "piezas_recibidas_ol": "PIEZAS_RECIBIDAS_OL",
+        "piezas_entregadas_clues": "PIEZAS_ENTREGADAS_CLUES",
+        "tipo_red": "TIPO_RED",
+        "grupo_terapeutico": "GRUPO_TERAPEUTICO",
+        "estatus_operativo": "ESTATUS_OPERATIVO",
+        "estatus_base": "ESTATUS_BASE",
+        "origen_compendio": "ORIGEN_COMPENDIO",
+        "operador_logistico": "OPERADOR_LOGISTICO",
+        "estatus_recepcion_ol": "ESTATUS_RECEPCION_OL",
+        "estatus_entrega_estado": "ESTATUS_ENTREGA_ESTADO",
+        "estatus_incidencia_completa": "ESTATUS_INCIDENCIA_COMPLETA",
+        "tipo_incidencia": "TIPO_INCIDENCIA",
+        "atribuible_a": "ATRIBUIBLE A",
+        "estatus_incidencia": "ESTATUS_INCIDENCIA",
+        "responsable": "RESPONSABLE",
+        "observaciones": "OBSERVACIONES",
+        "pdf_cedula_rechazo": "PDF_CEDULA_RECHAZO",
+        "pdf_correo_seguimiento": "PDF_CORREO_SEGUIMIENTO",
+        "creado_en": "CREADO_EN"
+    }
+
+    incidencias = incidencias.rename(
+        columns=renombres
+    )
+
+    for columna, valor_default in columnas_necesarias.items():
+
+        if columna not in incidencias.columns:
+
+            incidencias[columna] = valor_default
+
+    columnas_ordenadas = list(
+        columnas_necesarias.keys()
+    )
+
+    otras_columnas = [
+        c for c in incidencias.columns
+        if c not in columnas_ordenadas
+    ]
+
+    return incidencias[
+        columnas_ordenadas + otras_columnas
+    ]
 
 
 def cargar_agenda_citas():
@@ -1163,29 +1233,90 @@ def obtener_incidencias_previas(
 
     return previas
 
+def preparar_valor_supabase(
+    valor
+):
+
+    if pd.isna(
+        valor
+    ):
+
+        return None
+
+    if isinstance(
+        valor,
+        (
+            pd.Timestamp,
+            datetime
+        )
+    ):
+
+        return valor.isoformat()
+
+    texto = str(
+        valor
+    ).strip()
+
+    if texto.lower() in [
+        "nan",
+        "none",
+        "null",
+        ""
+    ]:
+
+        return None
+
+    return texto
+
+
 def guardar_incidencia(
     nueva
 ):
 
-    incidencias = cargar_incidencias()
+    registro = {
+        "fecha_registro": preparar_valor_supabase(nueva.get("FECHA_REGISTRO", datetime.now())),
+        "origen_registro": preparar_valor_supabase(nueva.get("ORIGEN_REGISTRO", "SISTEMA")),
+        "orden_buscada": preparar_valor_supabase(nueva.get("ORDEN_BUSCADA", "")),
+        "orden_suministro": preparar_valor_supabase(nueva.get("orden_suministro", nueva.get("ORDEN", ""))),
+        "tipo_entrega": preparar_valor_supabase(nueva.get("TIPO_ENTREGA", "")),
+        "entidad": preparar_valor_supabase(nueva.get("ENTIDAD", "")),
+        "almacen_clues_destino": preparar_valor_supabase(nueva.get("ALMACEN_CLUES_DESTINO", "")),
+        "clues_destino": preparar_valor_supabase(nueva.get("CLUES_DESTINO", "")),
+        "unidad_destino": preparar_valor_supabase(nueva.get("UNIDAD_DESTINO", "")),
+        "proveedor": preparar_valor_supabase(nueva.get("PROVEEDOR", "")),
+        "orden": preparar_valor_supabase(nueva.get("ORDEN", "")),
+        "clave_cnis": preparar_valor_supabase(nueva.get("CLAVE_CNIS", "")),
+        "descripcion": preparar_valor_supabase(nueva.get("DESCRIPCION", "")),
+        "piezas_emitidas": preparar_valor_supabase(nueva.get("PIEZAS_EMITIDAS", "")),
+        "piezas_recibidas_ol": preparar_valor_supabase(nueva.get("PIEZAS_RECIBIDAS_OL", "")),
+        "piezas_entregadas_clues": preparar_valor_supabase(nueva.get("PIEZAS_ENTREGADAS_CLUES", "")),
+        "tipo_red": preparar_valor_supabase(nueva.get("TIPO_RED", "")),
+        "grupo_terapeutico": preparar_valor_supabase(nueva.get("GRUPO_TERAPEUTICO", "")),
+        "estatus_operativo": preparar_valor_supabase(nueva.get("ESTATUS_OPERATIVO", "")),
+        "estatus_base": preparar_valor_supabase(nueva.get("ESTATUS_BASE", "")),
+        "origen_compendio": preparar_valor_supabase(nueva.get("ORIGEN_COMPENDIO", "")),
+        "operador_logistico": preparar_valor_supabase(nueva.get("OPERADOR_LOGISTICO", "")),
+        "estatus_recepcion_ol": preparar_valor_supabase(nueva.get("ESTATUS_RECEPCION_OL", "")),
+        "estatus_entrega_estado": preparar_valor_supabase(nueva.get("ESTATUS_ENTREGA_ESTADO", "")),
+        "estatus_incidencia_completa": preparar_valor_supabase(nueva.get("ESTATUS_INCIDENCIA_COMPLETA", "")),
+        "tipo_incidencia": preparar_valor_supabase(nueva.get("TIPO_INCIDENCIA", "")),
+        "atribuible_a": preparar_valor_supabase(nueva.get("ATRIBUIBLE A", "")),
+        "estatus_incidencia": preparar_valor_supabase(nueva.get("ESTATUS_INCIDENCIA", "")),
+        "responsable": preparar_valor_supabase(nueva.get("RESPONSABLE", "")),
+        "observaciones": preparar_valor_supabase(nueva.get("OBSERVACIONES", "")),
+        "pdf_cedula_rechazo": preparar_valor_supabase(nueva.get("PDF_CEDULA_RECHAZO", "")),
+        "pdf_correo_seguimiento": preparar_valor_supabase(nueva.get("PDF_CORREO_SEGUIMIENTO", ""))
+    }
 
-    incidencias = pd.concat(
-        [
-            incidencias,
-            pd.DataFrame([nueva])
-        ],
-        ignore_index=True
-    )
-
-    incidencias.to_excel(
-        RUTA_INCIDENCIAS,
-        index=False
-    )
-
-    subir_archivo_drive(
-        RUTA_INCIDENCIAS,
-        ARCHIVO_INCIDENCIAS,
-        FOLDER_ID_INCIDENCIAS
+    (
+        supabase
+        .table(
+            "incidencias"
+        )
+        .insert(
+            registro
+        )
+        .execute()
     )
 
 
@@ -1374,6 +1505,28 @@ def subir_pdf_evidencia_drive(
     )
 
 
+def convertir_excel(
+    df
+):
+
+    salida = BytesIO()
+
+    with pd.ExcelWriter(
+        salida,
+        engine="openpyxl"
+    ) as writer:
+
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name="Incidencias"
+        )
+
+    salida.seek(0)
+
+    return salida
+
+
 # =========================
 # APP
 # =========================
@@ -1416,7 +1569,7 @@ st.sidebar.write(
 )
 
 st.sidebar.write(
-    "Incidencias filas:",
+    "Incidencias Supabase filas:",
     len(incidencias)
 )
 
@@ -1553,6 +1706,18 @@ if menu == "Dashboard":
 
         st.dataframe(
             incidencias,
+            use_container_width=True
+        )
+
+        excel = convertir_excel(
+            incidencias
+        )
+
+        st.download_button(
+            label="⬇️ Descargar incidencias en Excel",
+            data=excel,
+            file_name="reporte_incidencias.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
@@ -2166,6 +2331,18 @@ elif menu == "Seguimiento":
 
     st.dataframe(
         incidencias,
+        use_container_width=True
+    )
+
+    excel = convertir_excel(
+        incidencias
+    )
+
+    st.download_button(
+        label="⬇️ Descargar incidencias en Excel",
+        data=excel,
+        file_name="reporte_incidencias.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
 
