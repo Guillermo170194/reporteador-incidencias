@@ -294,7 +294,10 @@ def sincronizar_archivos_drive():
     return True
 
 
+# Sincronización inicial de archivos desde Drive.
+# Si la app tarda en abrir, este es el primer punto a revisar.
 sincronizar_archivos_drive()
+
 # =========================
 # COLORES
 # =========================
@@ -976,12 +979,30 @@ def obtener_incidencias_previas(
         .str.strip()
     )
 
-    if "orden_suministro" not in incidencias.columns:
+    columna_orden = None
+
+    posibles_columnas = [
+        "orden_suministro",
+        "ORDEN",
+        "ORDEN_BUSCADA",
+        "Orden de Suministro",
+        "ORDEN DE SUMINISTRO"
+    ]
+
+    for col in posibles_columnas:
+
+        if col in incidencias.columns:
+
+            columna_orden = col
+
+            break
+
+    if columna_orden is None:
 
         return pd.DataFrame()
 
-    incidencias["orden_suministro"] = (
-        incidencias["orden_suministro"]
+    incidencias["_ORDEN_TEMP"] = (
+        incidencias[columna_orden]
         .astype(str)
         .apply(normalizar_orden)
     )
@@ -990,15 +1011,21 @@ def obtener_incidencias_previas(
         orden
     )
 
-    return incidencias[
-        incidencias["orden_suministro"]
+    previas = incidencias[
+        incidencias["_ORDEN_TEMP"]
         ==
         orden_norm
-    ]
+    ].copy()
+
+    previas = previas.drop(
+        columns=[
+            "_ORDEN_TEMP"
+        ],
+        errors="ignore"
+    )
 
     return previas
 
-    return pd.DataFrame()
 
 def guardar_incidencia(
     nueva
