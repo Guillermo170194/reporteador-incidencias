@@ -142,16 +142,14 @@ def buscar_archivo_drive(
     folder_id
 ):
 
-    query = (
-        f"name = '{nombre_archivo}' "
-        f"and trashed = false"
-    )
-
     resultado = (
         drive_service.files()
         .list(
-            q=query,
-            fields="files(id, name, parents)",
+            q=(
+                f"'{folder_id}' in parents "
+                f"and trashed = false"
+            ),
+            fields="files(id, name, parents, mimeType)",
             corpora="allDrives",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True
@@ -164,14 +162,30 @@ def buscar_archivo_drive(
         []
     )
 
+    nombre_busqueda = (
+        nombre_archivo
+        .lower()
+        .strip()
+        .replace(".xlsx", "")
+    )
+
     for archivo in archivos:
 
-        padres = archivo.get(
-            "parents",
-            []
+        nombre_drive = (
+            archivo.get(
+                "name",
+                ""
+            )
+            .lower()
+            .strip()
+            .replace(".xlsx", "")
         )
 
-        if folder_id in padres:
+        if (
+            nombre_busqueda == nombre_drive
+            or nombre_busqueda in nombre_drive
+            or nombre_drive in nombre_busqueda
+        ):
 
             return archivo
 
@@ -183,12 +197,40 @@ def descargar_archivo_drive(
     ruta_destino
 ):
 
-    request = (
+    info = (
         drive_service.files()
-        .get_media(
-            fileId=file_id
+        .get(
+            fileId=file_id,
+            fields="id, name, mimeType",
+            supportsAllDrives=True
         )
+        .execute()
     )
+
+    mime = info.get(
+        "mimeType",
+        ""
+    )
+
+    if mime == "application/vnd.google-apps.spreadsheet":
+
+        request = (
+            drive_service.files()
+            .export_media(
+                fileId=file_id,
+                mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        )
+
+    else:
+
+        request = (
+            drive_service.files()
+            .get_media(
+                fileId=file_id,
+                supportsAllDrives=True
+            )
+        )
 
     with open(
         ruta_destino,
@@ -1144,6 +1186,191 @@ def guardar_incidencia(
         RUTA_INCIDENCIAS,
         ARCHIVO_INCIDENCIAS,
         FOLDER_ID_INCIDENCIAS
+    )
+
+
+# =========================
+# EVIDENCIAS DRIVE
+# =========================
+
+def buscar_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    nombre_carpeta = limpiar_nombre_carpeta(
+        nombre_carpeta
+    )
+
+    query = (
+        f"name = '{nombre_carpeta}' "
+        f"and mimeType = 'application/vnd.google-apps.folder' "
+        f"and '{parent_id}' in parents "
+        f"and trashed = false"
+    )
+
+    resultado = (
+        drive_service.files()
+        .list(
+            q=query,
+            fields="files(id,name)",
+            corpora="allDrives",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        )
+        .execute()
+    )
+
+    carpetas = resultado.get(
+        "files",
+        []
+    )
+
+    if carpetas:
+
+        return carpetas[0]["id"]
+
+    return None
+
+
+def crear_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    nombre_carpeta = limpiar_nombre_carpeta(
+        nombre_carpeta
+    )
+
+    metadata = {
+        "name": nombre_carpeta,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [
+            parent_id
+        ]
+    }
+
+    carpeta = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            fields="id",
+            supportsAllDrives=True
+        )
+        .execute()
+    )
+
+    return carpeta["id"]
+
+
+def obtener_o_crear_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    carpeta_id = buscar_carpeta_drive(
+        nombre_carpeta,
+        parent_id
+    )
+
+    if carpeta_id:
+
+        return carpeta_id
+
+    return crear_carpeta_drive(
+        nombre_carpeta,
+        parent_id
+    )
+
+
+def obtener_carpeta_evidencia(
+    estado,
+    clues
+):
+
+    carpeta_estado_id = obtener_o_crear_carpeta_drive(
+        estado,
+        FOLDER_ID_EVIDENCIAS
+    )
+
+    carpeta_clues_id = obtener_o_crear_carpeta_drive(
+        clues,
+        carpeta_estado_id
+    )
+
+    return carpeta_clues_id
+
+
+def subir_pdf_evidencia_drive(
+    archivo,
+    orden,
+    tipo_pdf,
+    estado,
+    clues
+):
+
+    if archivo is None:
+
+        return ""
+
+    carpeta_destino_id = obtener_carpeta_evidencia(
+        estado,
+        clues
+    )
+
+    fecha = datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
+    )
+
+    nombre_orden = limpiar_nombre_archivo(
+        orden
+    )
+
+    nombre_archivo = (
+        f"{fecha}_{nombre_orden}_{tipo_pdf}.pdf"
+    )
+
+    ruta_local = os.path.join(
+        TEMP_DIR,
+        nombre_archivo
+    )
+
+    with open(
+        ruta_local,
+        "wb"
+    ) as f:
+
+        f.write(
+            archivo.getbuffer()
+        )
+
+    metadata = {
+        "name": nombre_archivo,
+        "parents": [
+            carpeta_destino_id
+        ]
+    }
+
+    media = MediaFileUpload(
+        ruta_local,
+        mimetype="application/pdf",
+        resumable=True
+    )
+
+    nuevo = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            media_body=media,
+            fields="id, webViewLink",
+            supportsAllDrives=True
+        )
+        .execute()
+    )
+
+    return nuevo.get(
+        "webViewLink",
+        ""
     )
 
 
