@@ -294,10 +294,7 @@ def sincronizar_archivos_drive():
     return True
 
 
-# Sincronización inicial de archivos desde Drive.
-# Si la app tarda en abrir, este es el primer punto a revisar.
 sincronizar_archivos_drive()
-
 # =========================
 # COLORES
 # =========================
@@ -872,6 +869,7 @@ def cargar_incidencias():
     )
 
 
+
 def cargar_agenda_citas():
 
     if not os.path.exists(
@@ -890,25 +888,69 @@ def cargar_agenda_citas():
         .str.strip()
     )
 
-    if "orden_suministro" not in agenda.columns:
+    columna_orden = None
+
+    posibles_orden = [
+        "orden_suministro",
+        "ORDEN_SUMINISTRO",
+        "ORDEN DE SUMINISTRO",
+        "Orden de Suministro",
+        "ORDEN",
+        "orden",
+        "NO. ORDEN",
+        "no_orden"
+    ]
+
+    for col in posibles_orden:
+
+        if col in agenda.columns:
+
+            columna_orden = col
+
+            break
+
+    if columna_orden is None:
 
         return pd.DataFrame()
 
-    agenda["_ORDEN_BUSQUEDA"] = agenda[
-        "orden_suministro"
-    ].apply(
-        normalizar_orden
+    agenda["_ORDEN_BUSQUEDA"] = (
+        agenda[columna_orden]
+        .astype(str)
+        .apply(normalizar_orden)
     )
 
-    if "FECHA  DE CITA AGENDA" in agenda.columns:
+    columna_fecha = None
 
-        agenda["FECHA  DE CITA AGENDA"] = pd.to_datetime(
-            agenda["FECHA  DE CITA AGENDA"],
+    posibles_fecha = [
+        "FECHA  DE CITA AGENDA",
+        "FECHA DE CITA AGENDA",
+        "Fecha  de cita agenda",
+        "Fecha de cita agenda",
+        "fecha_de_cita_agenda",
+        "fecha_cita",
+        "FECHA CITA",
+        "Fecha cita",
+        "FECHA",
+        "fecha"
+    ]
+
+    for col in posibles_fecha:
+
+        if col in agenda.columns:
+
+            columna_fecha = col
+
+            break
+
+    if columna_fecha:
+
+        agenda["_FECHA_CITA"] = pd.to_datetime(
+            agenda[columna_fecha],
             errors="coerce"
         )
 
         agenda = agenda.sort_values(
-            "FECHA  DE CITA AGENDA"
+            "_FECHA_CITA"
         )
 
     agenda = agenda.drop_duplicates(
@@ -936,22 +978,45 @@ def obtener_cita_agenda(
         .str.strip()
     )
 
-    if "orden_suministro" not in agenda.columns:
+    if "_ORDEN_BUSQUEDA" not in agenda.columns:
 
-        return None
+        columna_orden = None
 
-    agenda["orden_suministro"] = (
-        agenda["orden_suministro"]
-        .astype(str)
-        .apply(normalizar_orden)
-    )
+        posibles_orden = [
+            "orden_suministro",
+            "ORDEN_SUMINISTRO",
+            "ORDEN DE SUMINISTRO",
+            "Orden de Suministro",
+            "ORDEN",
+            "orden",
+            "NO. ORDEN",
+            "no_orden"
+        ]
+
+        for col in posibles_orden:
+
+            if col in agenda.columns:
+
+                columna_orden = col
+
+                break
+
+        if columna_orden is None:
+
+            return None
+
+        agenda["_ORDEN_BUSQUEDA"] = (
+            agenda[columna_orden]
+            .astype(str)
+            .apply(normalizar_orden)
+        )
 
     orden_norm = normalizar_orden(
         orden
     )
 
     encontrado = agenda[
-        agenda["orden_suministro"]
+        agenda["_ORDEN_BUSQUEDA"]
         ==
         orden_norm
     ]
@@ -961,6 +1026,7 @@ def obtener_cita_agenda(
         return None
 
     return encontrado.iloc[0]
+
 
 def obtener_incidencias_previas(
     incidencias,
@@ -981,15 +1047,17 @@ def obtener_incidencias_previas(
 
     columna_orden = None
 
-    posibles_columnas = [
+    posibles_orden = [
         "orden_suministro",
         "ORDEN",
         "ORDEN_BUSCADA",
         "Orden de Suministro",
-        "ORDEN DE SUMINISTRO"
+        "ORDEN DE SUMINISTRO",
+        "NO. ORDEN",
+        "no_orden"
     ]
 
-    for col in posibles_columnas:
+    for col in posibles_orden:
 
         if col in incidencias.columns:
 
@@ -1025,7 +1093,6 @@ def obtener_incidencias_previas(
     )
 
     return previas
-
 
 def guardar_incidencia(
     nueva
@@ -1618,10 +1685,15 @@ elif menu == "Registrar incidencia":
                     fecha_cita = obtener_valor(
                         cita,
                         [
+                            "_FECHA_CITA",
                             "FECHA  DE CITA AGENDA",
+                            "FECHA DE CITA AGENDA",
                             "fecha_de_cita_agenda",
                             "fecha_cita",
-                            "Fecha  de cita agenda"
+                            "Fecha  de cita agenda",
+                            "Fecha de cita agenda",
+                            "FECHA CITA",
+                            "Fecha cita"
                         ]
                     )
 
