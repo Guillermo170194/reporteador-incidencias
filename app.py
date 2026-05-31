@@ -207,12 +207,29 @@ def descargar_por_nombre(
     obligatorio=False
 ):
 
+    st.sidebar.write(
+        f"Buscando archivo: {nombre_archivo}"
+    )
+
+    st.sidebar.write(
+        f"Folder ID: {folder_id}"
+    )
+
     archivo = buscar_archivo_drive(
         nombre_archivo,
         folder_id
     )
 
+    st.sidebar.write(
+        "Resultado Drive:",
+        archivo
+    )
+
     if archivo is None:
+
+        st.sidebar.error(
+            f"No encontrado: {nombre_archivo}"
+        )
 
         if obligatorio:
 
@@ -223,6 +240,17 @@ def descargar_por_nombre(
             st.stop()
 
         return False
+
+    descargar_archivo_drive(
+        archivo["id"],
+        ruta_destino
+    )
+
+    st.sidebar.success(
+        f"Descargado: {nombre_archivo}"
+    )
+
+    return True
 
     descargar_archivo_drive(
         archivo["id"],
