@@ -1013,6 +1013,111 @@ def cargar_incidencias():
 
 
 
+def obtener_cita_agenda_supabase(
+    orden
+):
+
+    orden_norm = normalizar_orden(
+        orden
+    )
+
+    if not orden_norm:
+
+        return None
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "agenda_citas"
+            )
+            .select(
+                "*"
+            )
+            .eq(
+                "orden_suministro",
+                orden_norm
+            )
+            .order(
+                "id",
+                desc=True
+            )
+            .limit(
+                1
+            )
+            .execute()
+        )
+
+        datos = respuesta.data
+
+        if not datos:
+
+            return None
+
+        return pd.Series(
+            datos[0]
+        )
+
+    except Exception as e:
+
+        st.warning(
+            f"No se pudo consultar agenda en Supabase: {e}"
+        )
+
+        return None
+
+
+def obtener_incidencias_previas_supabase(
+    orden
+):
+
+    orden_norm = normalizar_orden(
+        orden
+    )
+
+    if not orden_norm:
+
+        return pd.DataFrame()
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "incidencias"
+            )
+            .select(
+                "*"
+            )
+            .or_(
+                f"orden_suministro.eq.{orden_norm},orden.eq.{orden_norm},orden_buscada.eq.{orden_norm}"
+            )
+            .order(
+                "id",
+                desc=True
+            )
+            .limit(
+                100
+            )
+            .execute()
+        )
+
+        datos = respuesta.data
+
+        if not datos:
+
+            return pd.DataFrame()
+
+        return pd.DataFrame(
+            datos
+        )
+
+    except Exception:
+
+        return pd.DataFrame()
+
+
 @st.cache_data(
     ttl=300,
     show_spinner="Cargando resumen ejecutivo..."
@@ -1676,16 +1781,8 @@ menu = st.sidebar.radio(
 
 
 # =========================
-# CARGA INTELIGENTE
+# CARGA INTELIGENTE SUPABASE
 # =========================
-
-agenda_citas = pd.DataFrame()
-
-if menu == "Registrar incidencia":
-
-    sincronizar_archivos_drive()
-
-    agenda_citas = cargar_agenda_citas()
 
 incidencias = cargar_incidencias()
 
@@ -1696,22 +1793,9 @@ st.sidebar.write(
     len(incidencias)
 )
 
-if menu == "Registrar incidencia":
-
-    st.sidebar.write(
-        "Agenda filas:",
-        len(agenda_citas)
-    )
-
-    if not agenda_citas.empty:
-
-        st.sidebar.write(
-            "Columnas agenda:"
-        )
-
-        st.sidebar.write(
-            agenda_citas.columns.tolist()
-        )
+st.sidebar.caption(
+    "Agenda: Supabase"
+)
 
 
 st.sidebar.divider()
@@ -1841,6 +1925,10 @@ elif menu == "Registrar incidencia":
 
     st.subheader(
         "📝 Registrar incidencia"
+    )
+
+    st.caption(
+        "Modo rápido: compendio, agenda e incidencias se consultan directo en Supabase."
     )
 
     valor_busqueda = st.text_input(
@@ -2050,15 +2138,20 @@ elif menu == "Registrar incidencia":
                 estatus_entrega_estado
             )
 
-            cita = obtener_cita_agenda(
-                agenda_citas,
+            cita = obtener_cita_agenda_supabase(
                 orden
             )
 
-            incidencias_previas = obtener_incidencias_previas(
-                incidencias,
+            incidencias_previas = obtener_incidencias_previas_supabase(
                 orden
             )
+
+            if incidencias_previas.empty:
+
+                incidencias_previas = obtener_incidencias_previas(
+                    incidencias,
+                    orden
+                )
 
             st.divider()
 
@@ -2095,6 +2188,7 @@ elif menu == "Registrar incidencia":
                     fecha_cita = obtener_valor(
                         cita,
                         [
+                            "fecha_cita",
                             "_FECHA_CITA",
                             "FECHA  DE CITA AGENDA",
                             "FECHA DE CITA AGENDA",
