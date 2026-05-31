@@ -1320,7 +1320,48 @@ st.sidebar.success(
 
 incidencias = cargar_incidencias()
 
+st.sidebar.markdown("---")
+
+st.sidebar.write(
+    "Agenda filas:",
+    len(agenda_citas)
+)
+
+st.sidebar.write(
+    "Incidencias filas:",
+    len(incidencias)
+)
+
+if not agenda_citas.empty:
+
+    st.sidebar.write(
+        "Columnas agenda:"
+    )
+
+    st.sidebar.write(
+        agenda_citas.columns.tolist()
+    )
+
+if not incidencias.empty:
+
+    st.sidebar.write(
+        "Columnas incidencias:"
+    )
+
+    st.sidebar.write(
+        incidencias.columns.tolist()
+    )
+
 agenda_citas = cargar_agenda_citas()
+
+st.sidebar.write("Agenda filas:", len(agenda_citas))
+st.sidebar.write("Incidencias filas:", len(incidencias))
+
+if not agenda_citas.empty:
+    st.sidebar.write("Columnas agenda:", agenda_citas.columns.tolist())
+
+if not incidencias.empty:
+    st.sidebar.write("Columnas incidencias:", incidencias.columns.tolist())
 
 menu = st.sidebar.radio(
     "Menú",
