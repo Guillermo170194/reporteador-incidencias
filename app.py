@@ -271,10 +271,8 @@ def subir_archivo_drive(
         ).execute()
 
 
-@st.cache_data(
-    ttl=600,
-    show_spinner="Sincronizando agenda e incidencias..."
-)
+# SIN CACHE PARA FORZAR DESCARGA DE DRIVE
+
 def sincronizar_archivos_drive():
 
     descargar_por_nombre(
