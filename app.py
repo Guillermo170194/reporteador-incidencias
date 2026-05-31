@@ -1744,6 +1744,293 @@ def convertir_excel(
     return salida
 
 
+
+def obtener_datos_orden_para_registro(
+    valor_busqueda
+):
+
+    resultado = buscar_orden_fuerte(
+        valor_busqueda
+    )
+
+    if len(resultado) == 0:
+
+        return None, resultado
+
+    resultado = resultado.copy()
+
+    fila = resultado.iloc[
+        0
+    ]
+
+    estatus_base = obtener_valor(
+        fila,
+        [
+            "estatus_base"
+        ]
+    )
+
+    origen_compendio = obtener_valor(
+        fila,
+        [
+            "origen_compendio"
+        ]
+    )
+
+    orden = obtener_valor(
+        fila,
+        [
+            "orden_suministro",
+            "orden",
+            "no_orden"
+        ]
+    )
+
+    tipo_entrega = obtener_valor(
+        fila,
+        [
+            "tipo_entrega"
+        ]
+    )
+
+    entidad = obtener_valor(
+        fila,
+        [
+            "entidad",
+            "estado"
+        ]
+    )
+
+    clues_destino = obtener_valor(
+        fila,
+        [
+            "clues_destino"
+        ]
+    )
+
+    unidad_destino = obtener_valor(
+        fila,
+        [
+            "unidad_destino"
+        ]
+    )
+
+    almacen_original = obtener_valor(
+        fila,
+        [
+            "almacen"
+        ]
+    )
+
+    almacen = construir_almacen(
+        clues_destino,
+        unidad_destino,
+        almacen_original
+    )
+
+    proveedor = obtener_valor(
+        fila,
+        [
+            "proveedor"
+        ]
+    )
+
+    clave = obtener_valor(
+        fila,
+        [
+            "clave_cnis"
+        ]
+    )
+
+    descripcion = obtener_valor(
+        fila,
+        [
+            "descripcion"
+        ]
+    )
+
+    piezas_emitidas = obtener_valor(
+        fila,
+        [
+            "piezas_emitidas"
+        ]
+    )
+
+    piezas_recibidas_ol = obtener_valor(
+        fila,
+        [
+            "piezas_recibidas_ol"
+        ]
+    )
+
+    piezas_entregadas = obtener_valor(
+        fila,
+        [
+            "piezas_entregadas_clues"
+        ]
+    )
+
+    operador = obtener_valor(
+        fila,
+        [
+            "operador_logistico"
+        ]
+    )
+
+    tipo_red = obtener_valor(
+        fila,
+        [
+            "tipo_red"
+        ]
+    )
+
+    grupo_terapeutico = obtener_valor(
+        fila,
+        [
+            "grupo_terapeutico"
+        ]
+    )
+
+    estatus_orden = obtener_valor(
+        fila,
+        [
+            "estatus"
+        ]
+    )
+
+    tiene_ol = es_operador_logistico(
+        tipo_entrega
+    )
+
+    estatus_recepcion_ol = ""
+
+    if tiene_ol:
+
+        estatus_recepcion_ol = calcular_estatus_piezas(
+            piezas_emitidas,
+            piezas_recibidas_ol
+        )
+
+    estatus_entrega_estado = calcular_estatus_piezas(
+        piezas_emitidas,
+        piezas_entregadas
+    )
+
+    estatus_completa = calcular_estatus_incidencia_completa(
+        estatus_entrega_estado
+    )
+
+    datos = {
+        "resultado": resultado,
+        "fila": fila,
+        "estatus_base": estatus_base,
+        "origen_compendio": origen_compendio,
+        "orden": orden,
+        "tipo_entrega": tipo_entrega,
+        "entidad": entidad,
+        "clues_destino": clues_destino,
+        "unidad_destino": unidad_destino,
+        "almacen": almacen,
+        "proveedor": proveedor,
+        "clave": clave,
+        "descripcion": descripcion,
+        "piezas_emitidas": piezas_emitidas,
+        "piezas_recibidas_ol": piezas_recibidas_ol,
+        "piezas_entregadas": piezas_entregadas,
+        "operador": operador,
+        "tipo_red": tipo_red,
+        "grupo_terapeutico": grupo_terapeutico,
+        "estatus_orden": estatus_orden,
+        "estatus_recepcion_ol": estatus_recepcion_ol,
+        "estatus_entrega_estado": estatus_entrega_estado,
+        "estatus_completa": estatus_completa
+    }
+
+    return datos, resultado
+
+
+def construir_registro_incidencia(
+    valor_busqueda,
+    datos,
+    atribuible,
+    tipo,
+    estatus,
+    responsable,
+    observaciones,
+    ruta_cedula="",
+    ruta_correo=""
+):
+
+    return {
+        "FECHA_REGISTRO": datetime.now(),
+        "ORIGEN_REGISTRO": "SISTEMA",
+        "ORDEN_BUSCADA": valor_busqueda,
+        "orden_suministro": datos["orden"],
+        "ORDEN": datos["orden"],
+        "TIPO_ENTREGA": datos["tipo_entrega"],
+        "ENTIDAD": datos["entidad"],
+        "ALMACEN_CLUES_DESTINO": datos["almacen"],
+        "CLUES_DESTINO": datos["clues_destino"],
+        "UNIDAD_DESTINO": datos["unidad_destino"],
+        "PROVEEDOR": datos["proveedor"],
+        "CLAVE_CNIS": datos["clave"],
+        "DESCRIPCION": datos["descripcion"],
+        "PIEZAS_EMITIDAS": datos["piezas_emitidas"],
+        "PIEZAS_RECIBIDAS_OL": datos["piezas_recibidas_ol"],
+        "PIEZAS_ENTREGADAS_CLUES": datos["piezas_entregadas"],
+        "TIPO_RED": datos["tipo_red"],
+        "GRUPO_TERAPEUTICO": datos["grupo_terapeutico"],
+        "ESTATUS_OPERATIVO": datos["estatus_base"],
+        "ESTATUS_BASE": datos["estatus_base"],
+        "ORIGEN_COMPENDIO": datos["origen_compendio"],
+        "OPERADOR_LOGISTICO": datos["operador"],
+        "ESTATUS_RECEPCION_OL": datos["estatus_recepcion_ol"],
+        "ESTATUS_ENTREGA_ESTADO": datos["estatus_entrega_estado"],
+        "ESTATUS_INCIDENCIA_COMPLETA": datos["estatus_completa"],
+        "ATRIBUIBLE A": atribuible,
+        "TIPO_INCIDENCIA": tipo,
+        "ESTATUS_INCIDENCIA": estatus,
+        "RESPONSABLE": responsable,
+        "OBSERVACIONES": observaciones,
+        "PDF_CEDULA_RECHAZO": ruta_cedula,
+        "PDF_CORREO_SEGUIMIENTO": ruta_correo
+    }
+
+
+def extraer_ordenes_masivas(
+    texto
+):
+
+    ordenes = []
+
+    for linea in str(texto).splitlines():
+
+        linea = linea.strip()
+
+        if not linea:
+
+            continue
+
+        partes = re.split(
+            r"[,;\t]+",
+            linea
+        )
+
+        for parte in partes:
+
+            orden = normalizar_orden(
+                parte
+            )
+
+            if orden and orden not in ordenes:
+
+                ordenes.append(
+                    orden
+                )
+
+    return ordenes
+
+
 # =========================
 # APP
 # =========================
@@ -1772,8 +2059,8 @@ st.sidebar.success(
 menu = st.sidebar.radio(
     "Menú",
     [
-        "Dashboard",
         "Registrar incidencia",
+        "Dashboard",
         "Seguimiento",
         "Base Supabase"
     ]
@@ -1921,7 +2208,7 @@ if menu == "Dashboard":
 # REGISTRAR INCIDENCIA
 # =========================
 
-elif menu == "Registrar incidencia":
+if menu == "Registrar incidencia":
 
     st.subheader(
         "📝 Registrar incidencia"
@@ -1931,599 +2218,685 @@ elif menu == "Registrar incidencia":
         "Modo rápido: compendio, agenda e incidencias se consultan directo en Supabase."
     )
 
-    valor_busqueda = st.text_input(
-        "Orden de suministro",
-        placeholder="Ejemplo: CIMB-28-01-2025-28030776-U013"
+    modo_registro = st.radio(
+        "Tipo de captura",
+        [
+            "Individual",
+            "Masiva"
+        ],
+        horizontal=True
     )
 
-    if valor_busqueda:
+    if modo_registro == "Individual":
 
-        with st.spinner(
-            "Buscando orden en Supabase..."
-        ):
+        valor_busqueda = st.text_input(
+            "Orden de suministro",
+            placeholder="Ejemplo: CIMB-28-01-2025-28030776-U013"
+        )
 
-            resultado = buscar_orden_fuerte(
-                valor_busqueda
-            )
+        if valor_busqueda:
 
-        if len(resultado) == 0:
+            with st.spinner(
+                "Buscando orden en Supabase..."
+            ):
 
-            st.warning(
-                "No encontré esa orden exacta."
-            )
-
-            sugerencias = sugerir_ordenes(
-                valor_busqueda
-            )
-
-            if len(sugerencias) > 0:
-
-                st.info(
-                    "Posibles coincidencias:"
+                datos_orden, resultado = obtener_datos_orden_para_registro(
+                    valor_busqueda
                 )
 
-                st.dataframe(
-                    sugerencias,
-                    use_container_width=True
+            if datos_orden is None:
+
+                st.warning(
+                    "No encontré esa orden exacta."
                 )
+
+                sugerencias = sugerir_ordenes(
+                    valor_busqueda
+                )
+
+                if len(sugerencias) > 0:
+
+                    st.info(
+                        "Posibles coincidencias:"
+                    )
+
+                    st.dataframe(
+                        sugerencias,
+                        use_container_width=True
+                    )
+
+                else:
+
+                    st.error(
+                        "No encontré coincidencias en Supabase."
+                    )
 
             else:
 
-                st.error(
-                    "No encontré coincidencias en Supabase."
-                )
+                estatus_base = datos_orden["estatus_base"]
+                origen_compendio = datos_orden["origen_compendio"]
+                orden = datos_orden["orden"]
+                tipo_entrega = datos_orden["tipo_entrega"]
+                entidad = datos_orden["entidad"]
+                clues_destino = datos_orden["clues_destino"]
+                unidad_destino = datos_orden["unidad_destino"]
+                almacen = datos_orden["almacen"]
+                proveedor = datos_orden["proveedor"]
+                clave = datos_orden["clave"]
+                descripcion = datos_orden["descripcion"]
+                piezas_emitidas = datos_orden["piezas_emitidas"]
+                piezas_recibidas_ol = datos_orden["piezas_recibidas_ol"]
+                piezas_entregadas = datos_orden["piezas_entregadas"]
+                operador = datos_orden["operador"]
+                tipo_red = datos_orden["tipo_red"]
+                grupo_terapeutico = datos_orden["grupo_terapeutico"]
+                estatus_orden = datos_orden["estatus_orden"]
+                estatus_recepcion_ol = datos_orden["estatus_recepcion_ol"]
+                estatus_entrega_estado = datos_orden["estatus_entrega_estado"]
+                estatus_completa = datos_orden["estatus_completa"]
 
-        else:
-
-            resultado = resultado.copy()
-
-            fila = resultado.iloc[
-                0
-            ]
-
-            estatus_base = obtener_valor(
-                fila,
-                [
-                    "estatus_base"
-                ]
-            )
-
-            origen_compendio = obtener_valor(
-                fila,
-                [
-                    "origen_compendio"
-                ]
-            )
-
-            orden = obtener_valor(
-                fila,
-                [
-                    "orden_suministro",
-                    "orden",
-                    "no_orden"
-                ]
-            )
-
-            tipo_entrega = obtener_valor(
-                fila,
-                [
-                    "tipo_entrega"
-                ]
-            )
-
-            entidad = obtener_valor(
-                fila,
-                [
-                    "entidad",
-                    "estado"
-                ]
-            )
-
-            clues_destino = obtener_valor(
-                fila,
-                [
-                    "clues_destino"
-                ]
-            )
-
-            unidad_destino = obtener_valor(
-                fila,
-                [
-                    "unidad_destino"
-                ]
-            )
-
-            almacen_original = obtener_valor(
-                fila,
-                [
-                    "almacen"
-                ]
-            )
-
-            almacen = construir_almacen(
-                clues_destino,
-                unidad_destino,
-                almacen_original
-            )
-
-            proveedor = obtener_valor(
-                fila,
-                [
-                    "proveedor"
-                ]
-            )
-
-            clave = obtener_valor(
-                fila,
-                [
-                    "clave_cnis"
-                ]
-            )
-
-            descripcion = obtener_valor(
-                fila,
-                [
-                    "descripcion"
-                ]
-            )
-
-            piezas_emitidas = obtener_valor(
-                fila,
-                [
-                    "piezas_emitidas"
-                ]
-            )
-
-            piezas_recibidas_ol = obtener_valor(
-                fila,
-                [
-                    "piezas_recibidas_ol"
-                ]
-            )
-
-            piezas_entregadas = obtener_valor(
-                fila,
-                [
-                    "piezas_entregadas_clues"
-                ]
-            )
-
-            operador = obtener_valor(
-                fila,
-                [
-                    "operador_logistico"
-                ]
-            )
-
-            tipo_red = obtener_valor(
-                fila,
-                [
-                    "tipo_red"
-                ]
-            )
-
-            grupo_terapeutico = obtener_valor(
-                fila,
-                [
-                    "grupo_terapeutico"
-                ]
-            )
-
-            estatus_orden = obtener_valor(
-                fila,
-                [
-                    "estatus"
-                ]
-            )
-
-            tiene_ol = es_operador_logistico(
-                tipo_entrega
-            )
-
-            estatus_recepcion_ol = ""
-
-            if tiene_ol:
-
-                estatus_recepcion_ol = calcular_estatus_piezas(
-                    piezas_emitidas,
-                    piezas_recibidas_ol
-                )
-
-            estatus_entrega_estado = calcular_estatus_piezas(
-                piezas_emitidas,
-                piezas_entregadas
-            )
-
-            estatus_completa = calcular_estatus_incidencia_completa(
-                estatus_entrega_estado
-            )
-
-            cita = obtener_cita_agenda_supabase(
-                orden
-            )
-
-            incidencias_previas = obtener_incidencias_previas_supabase(
-                orden
-            )
-
-            if incidencias_previas.empty:
-
-                incidencias_previas = obtener_incidencias_previas(
-                    incidencias,
+                cita = obtener_cita_agenda_supabase(
                     orden
                 )
 
-            st.divider()
+                incidencias_previas = obtener_incidencias_previas_supabase(
+                    orden
+                )
 
-            c_estado, c_cita, c_previas = st.columns(
-                3
-            )
+                if incidencias_previas.empty:
 
-            with c_estado:
-
-                if str(
-                    estatus_base
-                ).upper().strip() == "INACTIVA":
-
-                    st.error(
-                        "🚫 Orden CANCELADA / INACTIVA"
+                    incidencias_previas = obtener_incidencias_previas(
+                        incidencias,
+                        orden
                     )
 
-                else:
+                st.divider()
 
-                    st.success(
-                        "✅ Orden ACTIVA"
-                    )
+                c_estado, c_cita, c_previas = st.columns(
+                    3
+                )
 
-            with c_cita:
+                with c_estado:
 
-                if cita is None:
+                    if str(
+                        estatus_base
+                    ).upper().strip() == "INACTIVA":
 
-                    st.warning(
-                        "📅 Sin cita localizada"
-                    )
+                        st.error(
+                            "🚫 Orden CANCELADA / INACTIVA"
+                        )
 
-                else:
+                    else:
 
-                    fecha_cita = obtener_valor(
-                        cita,
-                        [
-                            "fecha_cita",
-                            "_FECHA_CITA",
-                            "FECHA  DE CITA AGENDA",
-                            "FECHA DE CITA AGENDA",
-                            "fecha_de_cita_agenda",
-                            "fecha_cita",
-                            "Fecha  de cita agenda",
-                            "Fecha de cita agenda",
-                            "FECHA CITA",
-                            "Fecha cita"
-                        ]
-                    )
+                        st.success(
+                            "✅ Orden ACTIVA"
+                        )
 
-                    st.success(
-                        f"📅 Cita: {fecha_a_texto(fecha_cita)}"
-                    )
+                with c_cita:
 
-            with c_previas:
+                    if cita is None:
+
+                        st.warning(
+                            "📅 Sin cita localizada"
+                        )
+
+                    else:
+
+                        fecha_cita = obtener_valor(
+                            cita,
+                            [
+                                "fecha_cita",
+                                "_FECHA_CITA",
+                                "FECHA  DE CITA AGENDA",
+                                "FECHA DE CITA AGENDA",
+                                "fecha_de_cita_agenda",
+                                "Fecha  de cita agenda",
+                                "Fecha de cita agenda",
+                                "FECHA CITA",
+                                "Fecha cita"
+                            ]
+                        )
+
+                        st.success(
+                            f"📅 Cita: {fecha_a_texto(fecha_cita)}"
+                        )
+
+                with c_previas:
+
+                    if len(
+                        incidencias_previas
+                    ) > 0:
+
+                        st.warning(
+                            f"⚠️ Ya tiene {len(incidencias_previas)} incidencia(s)"
+                        )
+
+                    else:
+
+                        st.success(
+                            "🟢 Sin incidencias previas"
+                        )
 
                 if len(
                     incidencias_previas
                 ) > 0:
 
-                    st.warning(
-                        f"⚠️ Ya tiene {len(incidencias_previas)} incidencia(s)"
+                    with st.expander(
+                        "Ver incidencias previas"
+                    ):
+
+                        st.dataframe(
+                            incidencias_previas,
+                            use_container_width=True
+                        )
+
+                st.subheader(
+                    "📋 Datos encontrados en Supabase"
+                )
+
+                st.dataframe(
+                    resultado.head(
+                        50
+                    ),
+                    use_container_width=True
+                )
+
+                st.divider()
+
+                st.subheader(
+                    "🔒 Información de la orden"
+                )
+
+                c1, c2, c3 = st.columns(
+                    3
+                )
+
+                c1.text_input(
+                    "Entidad",
+                    entidad,
+                    disabled=True
+                )
+
+                c2.text_input(
+                    "Almacén / CLUES destino",
+                    almacen,
+                    disabled=True
+                )
+
+                c3.text_input(
+                    "Proveedor",
+                    proveedor,
+                    disabled=True
+                )
+
+                c4, c5, c6 = st.columns(
+                    3
+                )
+
+                c4.text_input(
+                    "Orden",
+                    orden,
+                    disabled=True
+                )
+
+                c5.text_input(
+                    "Clave CNIS",
+                    clave,
+                    disabled=True
+                )
+
+                c6.text_input(
+                    "Tipo de entrega",
+                    tipo_entrega,
+                    disabled=True
+                )
+
+                c7, c8, c9 = st.columns(
+                    3
+                )
+
+                c7.text_input(
+                    "Estatus base",
+                    estatus_base,
+                    disabled=True
+                )
+
+                c8.text_input(
+                    "Origen compendio",
+                    origen_compendio,
+                    disabled=True
+                )
+
+                c9.text_input(
+                    "Estatus orden",
+                    estatus_orden,
+                    disabled=True
+                )
+
+                c10, c11 = st.columns(
+                    2
+                )
+
+                c10.text_input(
+                    "Tipo de red",
+                    tipo_red,
+                    disabled=True
+                )
+
+                c11.text_input(
+                    "Grupo terapéutico",
+                    grupo_terapeutico,
+                    disabled=True
+                )
+
+                st.text_area(
+                    "Descripción",
+                    descripcion,
+                    disabled=True
+                )
+
+                st.subheader(
+                    "🚚 Validación logística"
+                )
+
+                c12, c13, c14 = st.columns(
+                    3
+                )
+
+                c12.metric(
+                    "Piezas emitidas",
+                    piezas_emitidas
+                )
+
+                c13.metric(
+                    "Piezas recibidas OL",
+                    piezas_recibidas_ol
+                )
+
+                c14.metric(
+                    "Piezas entregadas CLUES",
+                    piezas_entregadas
+                )
+
+                c15, c16 = st.columns(
+                    2
+                )
+
+                c15.text_input(
+                    "Estatus recepción OL",
+                    estatus_recepcion_ol,
+                    disabled=True
+                )
+
+                c16.text_input(
+                    "Estatus entrega Estado / CLUES",
+                    estatus_entrega_estado,
+                    disabled=True
+                )
+
+                st.text_input(
+                    "Incidencia automática",
+                    estatus_completa,
+                    disabled=True
+                )
+
+                st.divider()
+
+                st.subheader(
+                    "✍️ Captura de incidencia"
+                )
+
+                c17, c18, c19 = st.columns(
+                    3
+                )
+
+                with c17:
+
+                    atribuible = st.selectbox(
+                        "Atribuible a",
+                        ATRIBUIBLES
                     )
 
-                else:
+                with c18:
+
+                    tipo = st.selectbox(
+                        "Tipo de incidencia",
+                        TIPOS_INCIDENCIA_GENERAL
+                    )
+
+                with c19:
+
+                    estatus = st.selectbox(
+                        "Estatus incidencia",
+                        [
+                            "Pendiente",
+                            "En proceso",
+                            "Escalado",
+                            "Resuelta",
+                            "Cancelada"
+                        ]
+                    )
+
+                responsable = st.text_input(
+                    "Responsable"
+                )
+
+                observaciones = st.text_area(
+                    "Observaciones"
+                )
+
+                st.subheader(
+                    "📎 Evidencias"
+                )
+
+                c20, c21 = st.columns(
+                    2
+                )
+
+                with c20:
+
+                    cedula_rechazo = st.file_uploader(
+                        "Cédula rechazo PDF",
+                        type=[
+                            "pdf"
+                        ]
+                    )
+
+                with c21:
+
+                    correo_seguimiento = st.file_uploader(
+                        "Correo seguimiento PDF",
+                        type=[
+                            "pdf"
+                        ]
+                    )
+
+                guardar = st.button(
+                    "💾 Guardar incidencia",
+                    use_container_width=True
+                )
+
+                if guardar:
+
+                    ruta_cedula = subir_pdf_evidencia_drive(
+                        cedula_rechazo,
+                        orden,
+                        "cedula",
+                        entidad,
+                        clues_destino
+                    )
+
+                    ruta_correo = subir_pdf_evidencia_drive(
+                        correo_seguimiento,
+                        orden,
+                        "correo",
+                        entidad,
+                        clues_destino
+                    )
+
+                    nueva = construir_registro_incidencia(
+                        valor_busqueda,
+                        datos_orden,
+                        atribuible,
+                        tipo,
+                        estatus,
+                        responsable,
+                        observaciones,
+                        ruta_cedula,
+                        ruta_correo
+                    )
+
+                    guardar_incidencia(
+                        nueva
+                    )
 
                     st.success(
-                        "🟢 Sin incidencias previas"
+                        "Incidencia guardada correctamente."
                     )
 
-            if len(
-                incidencias_previas
-            ) > 0:
+                    st.cache_data.clear()
 
-                with st.expander(
-                    "Ver incidencias previas"
-                ):
+                    st.rerun()
 
-                    st.dataframe(
-                        incidencias_previas,
-                        use_container_width=True
+    else:
+
+        st.info(
+            "Pega una orden por línea. Se aplicará la misma incidencia a todas."
+        )
+
+        texto_ordenes = st.text_area(
+            "Órdenes de suministro",
+            height=220,
+            placeholder="IMBB-16-02-2025-16244042-U013\\nIMBB-16-02-2025-16244043-U013"
+        )
+
+        ordenes = extraer_ordenes_masivas(
+            texto_ordenes
+        )
+
+        st.caption(
+            f"Órdenes detectadas: {len(ordenes)}"
+        )
+
+        c1, c2, c3 = st.columns(
+            3
+        )
+
+        with c1:
+
+            atribuible_m = st.selectbox(
+                "Atribuible a",
+                ATRIBUIBLES,
+                key="masivo_atribuible"
+            )
+
+        with c2:
+
+            tipo_m = st.selectbox(
+                "Tipo de incidencia",
+                TIPOS_INCIDENCIA_GENERAL,
+                key="masivo_tipo"
+            )
+
+        with c3:
+
+            estatus_m = st.selectbox(
+                "Estatus incidencia",
+                [
+                    "Pendiente",
+                    "En proceso",
+                    "Escalado",
+                    "Resuelta",
+                    "Cancelada"
+                ],
+                key="masivo_estatus"
+            )
+
+        responsable_m = st.text_input(
+            "Responsable",
+            key="masivo_responsable"
+        )
+
+        observaciones_m = st.text_area(
+            "Observaciones",
+            key="masivo_observaciones"
+        )
+
+        validar_masivo = st.button(
+            "🔎 Validar órdenes",
+            use_container_width=True
+        )
+
+        if validar_masivo and ordenes:
+
+            registros_preview = []
+
+            for orden_m in ordenes:
+
+                datos_m, resultado_m = obtener_datos_orden_para_registro(
+                    orden_m
+                )
+
+                if datos_m is None:
+
+                    registros_preview.append(
+                        {
+                            "ORDEN": orden_m,
+                            "ESTATUS": "NO ENCONTRADA",
+                            "ENTIDAD": "",
+                            "CLUES": "",
+                            "PROVEEDOR": "",
+                            "INCIDENCIAS_PREVIAS": 0,
+                            "CITA": ""
+                        }
                     )
 
-            st.subheader(
-                "📋 Datos encontrados en Supabase"
+                    continue
+
+                previas_m = obtener_incidencias_previas_supabase(
+                    datos_m["orden"]
+                )
+
+                cita_m = obtener_cita_agenda_supabase(
+                    datos_m["orden"]
+                )
+
+                fecha_cita_m = ""
+
+                if cita_m is not None:
+
+                    fecha_cita_m = fecha_a_texto(
+                        obtener_valor(
+                            cita_m,
+                            [
+                                "fecha_cita"
+                            ]
+                        )
+                    )
+
+                registros_preview.append(
+                    {
+                        "ORDEN": datos_m["orden"],
+                        "ESTATUS": datos_m["estatus_base"],
+                        "ENTIDAD": datos_m["entidad"],
+                        "CLUES": datos_m["clues_destino"],
+                        "PROVEEDOR": datos_m["proveedor"],
+                        "INCIDENCIAS_PREVIAS": len(previas_m),
+                        "CITA": fecha_cita_m
+                    }
+                )
+
+            st.session_state["preview_masivo"] = registros_preview
+
+        if "preview_masivo" in st.session_state:
+
+            preview_df = pd.DataFrame(
+                st.session_state["preview_masivo"]
             )
 
             st.dataframe(
-                resultado.head(
-                    50
-                ),
+                preview_df,
                 use_container_width=True
             )
 
-            st.divider()
+            encontradas = preview_df[
+                preview_df["ESTATUS"] != "NO ENCONTRADA"
+            ].shape[0]
 
-            st.subheader(
-                "🔒 Información de la orden"
+            st.success(
+                f"Listas para guardar: {encontradas} de {len(preview_df)}"
             )
 
-            c1, c2, c3 = st.columns(
-                3
-            )
+        guardar_masivo = st.button(
+            "💾 Guardar incidencia para todas las órdenes encontradas",
+            use_container_width=True
+        )
 
-            c1.text_input(
-                "Entidad",
-                entidad,
-                disabled=True
-            )
+        if guardar_masivo:
 
-            c2.text_input(
-                "Almacén / CLUES destino",
-                almacen,
-                disabled=True
-            )
+            if not ordenes:
 
-            c3.text_input(
-                "Proveedor",
-                proveedor,
-                disabled=True
-            )
-
-            c4, c5, c6 = st.columns(
-                3
-            )
-
-            c4.text_input(
-                "Orden",
-                orden,
-                disabled=True
-            )
-
-            c5.text_input(
-                "Clave CNIS",
-                clave,
-                disabled=True
-            )
-
-            c6.text_input(
-                "Tipo de entrega",
-                tipo_entrega,
-                disabled=True
-            )
-
-            c7, c8, c9 = st.columns(
-                3
-            )
-
-            c7.text_input(
-                "Estatus base",
-                estatus_base,
-                disabled=True
-            )
-
-            c8.text_input(
-                "Origen compendio",
-                origen_compendio,
-                disabled=True
-            )
-
-            c9.text_input(
-                "Estatus orden",
-                estatus_orden,
-                disabled=True
-            )
-
-            c10, c11 = st.columns(
-                2
-            )
-
-            c10.text_input(
-                "Tipo de red",
-                tipo_red,
-                disabled=True
-            )
-
-            c11.text_input(
-                "Grupo terapéutico",
-                grupo_terapeutico,
-                disabled=True
-            )
-
-            st.text_area(
-                "Descripción",
-                descripcion,
-                disabled=True
-            )
-
-            st.subheader(
-                "🚚 Validación logística"
-            )
-
-            c12, c13, c14 = st.columns(
-                3
-            )
-
-            c12.metric(
-                "Piezas emitidas",
-                piezas_emitidas
-            )
-
-            c13.metric(
-                "Piezas recibidas OL",
-                piezas_recibidas_ol
-            )
-
-            c14.metric(
-                "Piezas entregadas CLUES",
-                piezas_entregadas
-            )
-
-            c15, c16 = st.columns(
-                2
-            )
-
-            c15.text_input(
-                "Estatus recepción OL",
-                estatus_recepcion_ol,
-                disabled=True
-            )
-
-            c16.text_input(
-                "Estatus entrega Estado / CLUES",
-                estatus_entrega_estado,
-                disabled=True
-            )
-
-            st.text_input(
-                "Incidencia automática",
-                estatus_completa,
-                disabled=True
-            )
-
-            st.divider()
-
-            st.subheader(
-                "✍️ Captura de incidencia"
-            )
-
-            c17, c18, c19 = st.columns(
-                3
-            )
-
-            with c17:
-
-                atribuible = st.selectbox(
-                    "Atribuible a",
-                    ATRIBUIBLES
+                st.warning(
+                    "Primero pega al menos una orden."
                 )
 
-            with c18:
+            else:
 
-                tipo = st.selectbox(
-                    "Tipo de incidencia",
-                    TIPOS_INCIDENCIA_GENERAL
-                )
+                guardadas = 0
 
-            with c19:
+                no_encontradas = []
 
-                estatus = st.selectbox(
-                    "Estatus incidencia",
-                    [
-                        "Pendiente",
-                        "En proceso",
-                        "Escalado",
-                        "Resuelta",
-                        "Cancelada"
-                    ]
-                )
+                errores = []
 
-            responsable = st.text_input(
-                "Responsable"
-            )
+                with st.spinner(
+                    "Guardando incidencias masivas..."
+                ):
 
-            observaciones = st.text_area(
-                "Observaciones"
-            )
+                    for orden_m in ordenes:
 
-            st.subheader(
-                "📎 Evidencias"
-            )
+                        try:
 
-            c20, c21 = st.columns(
-                2
-            )
+                            datos_m, resultado_m = obtener_datos_orden_para_registro(
+                                orden_m
+                            )
 
-            with c20:
+                            if datos_m is None:
 
-                cedula_rechazo = st.file_uploader(
-                    "Cédula rechazo PDF",
-                    type=[
-                        "pdf"
-                    ]
-                )
+                                no_encontradas.append(
+                                    orden_m
+                                )
 
-            with c21:
+                                continue
 
-                correo_seguimiento = st.file_uploader(
-                    "Correo seguimiento PDF",
-                    type=[
-                        "pdf"
-                    ]
-                )
+                            nueva_m = construir_registro_incidencia(
+                                orden_m,
+                                datos_m,
+                                atribuible_m,
+                                tipo_m,
+                                estatus_m,
+                                responsable_m,
+                                observaciones_m,
+                                "",
+                                ""
+                            )
 
-            guardar = st.button(
-                "💾 Guardar incidencia",
-                use_container_width=True
-            )
+                            guardar_incidencia(
+                                nueva_m
+                            )
 
-            if guardar:
+                            guardadas += 1
 
-                ruta_cedula = subir_pdf_evidencia_drive(
-                    cedula_rechazo,
-                    orden,
-                    "cedula",
-                    entidad,
-                    clues_destino
-                )
+                        except Exception as e:
 
-                ruta_correo = subir_pdf_evidencia_drive(
-                    correo_seguimiento,
-                    orden,
-                    "correo",
-                    entidad,
-                    clues_destino
-                )
-
-                nueva = {
-                    "FECHA_REGISTRO": datetime.now(),
-                    "ORIGEN_REGISTRO": "SISTEMA",
-                    "ORDEN_BUSCADA": valor_busqueda,
-                    "orden_suministro": orden,
-                    "ORDEN": orden,
-                    "TIPO_ENTREGA": tipo_entrega,
-                    "ENTIDAD": entidad,
-                    "ALMACEN_CLUES_DESTINO": almacen,
-                    "CLUES_DESTINO": clues_destino,
-                    "UNIDAD_DESTINO": unidad_destino,
-                    "PROVEEDOR": proveedor,
-                    "CLAVE_CNIS": clave,
-                    "DESCRIPCION": descripcion,
-                    "PIEZAS_EMITIDAS": piezas_emitidas,
-                    "PIEZAS_RECIBIDAS_OL": piezas_recibidas_ol,
-                    "PIEZAS_ENTREGADAS_CLUES": piezas_entregadas,
-                    "TIPO_RED": tipo_red,
-                    "GRUPO_TERAPEUTICO": grupo_terapeutico,
-                    "ESTATUS_OPERATIVO": estatus_base,
-                    "ESTATUS_BASE": estatus_base,
-                    "ORIGEN_COMPENDIO": origen_compendio,
-                    "OPERADOR_LOGISTICO": operador,
-                    "ESTATUS_RECEPCION_OL": estatus_recepcion_ol,
-                    "ESTATUS_ENTREGA_ESTADO": estatus_entrega_estado,
-                    "ESTATUS_INCIDENCIA_COMPLETA": estatus_completa,
-                    "ATRIBUIBLE A": atribuible,
-                    "TIPO_INCIDENCIA": tipo,
-                    "ESTATUS_INCIDENCIA": estatus,
-                    "RESPONSABLE": responsable,
-                    "OBSERVACIONES": observaciones,
-                    "PDF_CEDULA_RECHAZO": ruta_cedula,
-                    "PDF_CORREO_SEGUIMIENTO": ruta_correo
-                }
-
-                guardar_incidencia(
-                    nueva
-                )
-
-                st.success(
-                    "Incidencia guardada correctamente."
-                )
+                            errores.append(
+                                f"{orden_m}: {e}"
+                            )
 
                 st.cache_data.clear()
 
-                st.rerun()
+                st.success(
+                    f"Guardadas correctamente: {guardadas}"
+                )
+
+                if no_encontradas:
+
+                    st.warning(
+                        f"No encontradas: {len(no_encontradas)}"
+                    )
+
+                    st.write(
+                        no_encontradas
+                    )
+
+                if errores:
+
+                    st.error(
+                        f"Errores: {len(errores)}"
+                    )
+
+                    st.write(
+                        errores
+                    )
 
 
 # =========================
