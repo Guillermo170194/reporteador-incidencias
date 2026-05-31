@@ -11,5 +11,5 @@ google-auth
 google-auth-httplib2
 google-auth-oauthlib
 duckdb
-supabase
+supabase==1.2.0
 supabase==2.15.3
