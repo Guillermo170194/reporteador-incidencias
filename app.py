@@ -810,7 +810,6 @@ def cargar_incidencias():
         "FECHA_REGISTRO": "",
         "ORIGEN_REGISTRO": "BASE HISTÓRICA",
         "ORDEN_BUSCADA": "",
-        "orden_suministro": "",
         "TIPO_ENTREGA": "",
         "ENTIDAD": "",
         "ALMACEN_CLUES_DESTINO": "",
@@ -1099,7 +1098,227 @@ def guardar_incidencia(
     nueva
 ):
 
-    # =========================
+    incidencias = cargar_incidencias()
+
+    incidencias = pd.concat(
+        [
+            incidencias,
+            pd.DataFrame([nueva])
+        ],
+        ignore_index=True
+    )
+
+    incidencias.to_excel(
+        RUTA_INCIDENCIAS,
+        index=False
+    )
+
+    subir_archivo_drive(
+        RUTA_INCIDENCIAS,
+        ARCHIVO_INCIDENCIAS,
+        FOLDER_ID_INCIDENCIAS
+    )
+
+
+# =========================
+# EVIDENCIAS DRIVE
+# =========================
+
+def buscar_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    nombre_carpeta = limpiar_nombre_carpeta(
+        nombre_carpeta
+    )
+
+    query = (
+        f"name = '{nombre_carpeta}' "
+        f"and mimeType = 'application/vnd.google-apps.folder' "
+        f"and '{parent_id}' in parents "
+        f"and trashed = false"
+    )
+
+    resultado = (
+        drive_service.files()
+        .list(
+            q=query,
+            fields="files(id,name)"
+        )
+        .execute()
+    )
+
+    carpetas = resultado.get(
+        "files",
+        []
+    )
+
+    if carpetas:
+
+        return carpetas[0]["id"]
+
+    return None
+
+
+def crear_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    nombre_carpeta = limpiar_nombre_carpeta(
+        nombre_carpeta
+    )
+
+    metadata = {
+        "name": nombre_carpeta,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [
+            parent_id
+        ]
+    }
+
+    carpeta = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            fields="id"
+        )
+        .execute()
+    )
+
+    return carpeta["id"]
+
+
+def obtener_o_crear_carpeta_drive(
+    nombre_carpeta,
+    parent_id
+):
+
+    carpeta_id = buscar_carpeta_drive(
+        nombre_carpeta,
+        parent_id
+    )
+
+    if carpeta_id:
+
+        return carpeta_id
+
+    return crear_carpeta_drive(
+        nombre_carpeta,
+        parent_id
+    )
+
+
+def obtener_carpeta_evidencia(
+    estado,
+    clues
+):
+
+    carpeta_estado_id = obtener_o_crear_carpeta_drive(
+        estado,
+        FOLDER_ID_EVIDENCIAS
+    )
+
+    carpeta_clues_id = obtener_o_crear_carpeta_drive(
+        clues,
+        carpeta_estado_id
+    )
+
+    return carpeta_clues_id
+
+
+def subir_pdf_evidencia_drive(
+    archivo,
+    orden,
+    tipo_pdf,
+    estado,
+    clues
+):
+
+    if archivo is None:
+
+        return ""
+
+    carpeta_destino_id = obtener_carpeta_evidencia(
+        estado,
+        clues
+    )
+
+    fecha = datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
+    )
+
+    nombre_orden = limpiar_nombre_archivo(
+        orden
+    )
+
+    nombre_archivo = (
+        f"{fecha}_{nombre_orden}_{tipo_pdf}.pdf"
+    )
+
+    ruta_local = os.path.join(
+        TEMP_DIR,
+        nombre_archivo
+    )
+
+    with open(
+        ruta_local,
+        "wb"
+    ) as f:
+
+        f.write(
+            archivo.getbuffer()
+        )
+
+    metadata = {
+        "name": nombre_archivo,
+        "parents": [
+            carpeta_destino_id
+        ]
+    }
+
+    media = MediaFileUpload(
+        ruta_local,
+        mimetype="application/pdf",
+        resumable=True
+    )
+
+    nuevo = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            media_body=media,
+            fields="id, webViewLink"
+        )
+        .execute()
+    )
+
+    return nuevo.get(
+        "webViewLink",
+        ""
+    )
+# =========================
+# APP
+# =========================
+
+st.title(
+    "📌 Reporteador de Incidencias 2026"
+)
+
+st.caption(
+    "Sistema operativo IMSS-BIENESTAR para seguimiento de incidencias."
+)
+
+st.sidebar.title(
+    "⚙️ Panel de control"
+)
+
+st.sidebar.success(
+    "Base principal conectada a Supabase."
+)
+
+# =========================
 # CARGAR BASES
 # =========================
 
@@ -1145,8 +1364,7 @@ if not agenda_citas.empty:
                 [
                     "_ORDEN_BUSQUEDA"
                 ]
-            ]
-            .head(20)
+            ].head(20)
         )
 
 if not incidencias.empty:
