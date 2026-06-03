@@ -705,6 +705,161 @@ def fecha_a_texto(
         )
 
 
+def limpiar_valor_visual(
+    valor
+):
+
+    if valor is None:
+
+        return ""
+
+    try:
+
+        if pd.isna(
+            valor
+        ):
+
+            return ""
+
+    except Exception:
+
+        pass
+
+    texto = str(
+        valor
+    ).strip()
+
+    if texto.lower() in [
+        "nan",
+        "none",
+        "null",
+        "nat",
+        "<na>"
+    ]:
+
+        return ""
+
+    return texto
+
+
+def limpiar_df_visual(
+    df
+):
+
+    if df is None:
+
+        return pd.DataFrame()
+
+    if not isinstance(
+        df,
+        pd.DataFrame
+    ):
+
+        try:
+
+            df = pd.DataFrame(
+                df
+            )
+
+        except Exception:
+
+            return pd.DataFrame()
+
+    if df.empty:
+
+        return df
+
+    limpio = df.copy()
+
+    limpio = limpio.replace(
+        {
+            None: np.nan,
+            "None": np.nan,
+            "none": np.nan,
+            "nan": np.nan,
+            "NaN": np.nan,
+            "NULL": np.nan,
+            "null": np.nan,
+            "NaT": np.nan,
+            "<NA>": np.nan
+        }
+    )
+
+    columnas_utiles = []
+
+    for columna in limpio.columns:
+
+        serie = limpio[
+            columna
+        ]
+
+        tiene_datos = (
+            serie
+            .astype(str)
+            .str.strip()
+            .replace(
+                {
+                    "nan": "",
+                    "None": "",
+                    "none": "",
+                    "NULL": "",
+                    "null": "",
+                    "NaT": "",
+                    "<NA>": ""
+                }
+            )
+            .ne("")
+            .any()
+        )
+
+        if tiene_datos:
+
+            columnas_utiles.append(
+                columna
+            )
+
+    limpio = limpio[
+        columnas_utiles
+    ].copy()
+
+    limpio = limpio.fillna(
+        ""
+    )
+
+    return limpio
+
+
+def dataframe_limpio(
+    df,
+    use_container_width=True,
+    hide_index=True
+):
+
+    st.dataframe(
+        limpiar_df_visual(
+            df
+        ),
+        use_container_width=use_container_width,
+        hide_index=hide_index
+    )
+
+
+def texto_limpio(
+    valor,
+    default=""
+):
+
+    texto = limpiar_valor_visual(
+        valor
+    )
+
+    if texto == "":
+
+        return default
+
+    return texto
+
+
 # =========================
 # SUPABASE HELPERS
 # =========================
@@ -2642,9 +2797,8 @@ if menu == "Dashboard":
 
         else:
 
-            st.dataframe(
-                recientes,
-                use_container_width=True
+            dataframe_limpio(
+                recientes
             )
 
         st.divider()
@@ -2733,9 +2887,8 @@ if menu == "Registrar incidencia":
                         "Posibles coincidencias:"
                     )
 
-                    st.dataframe(
-                        sugerencias,
-                        use_container_width=True
+                    dataframe_limpio(
+                        sugerencias
                     )
 
                 else:
@@ -2878,20 +3031,18 @@ if menu == "Registrar incidencia":
                         "Ver incidencias previas"
                     ):
 
-                        st.dataframe(
-                            incidencias_previas,
-                            use_container_width=True
+                        dataframe_limpio(
+                            incidencias_previas
                         )
 
                 st.subheader(
                     "📋 Datos encontrados en Supabase"
                 )
 
-                st.dataframe(
+                dataframe_limpio(
                     resultado.head(
                         50
-                    ),
-                    use_container_width=True
+                    )
                 )
 
                 st.divider()
@@ -3030,19 +3181,23 @@ if menu == "Registrar incidencia":
 
                     c_cpm3.text_input(
                         "CLUES CPM",
+                        texto_limpio(
                         registro_cpm.get(
                             "clues_busqueda",
                             ""
-                        ),
+                        )
+                    ),
                         disabled=True
                     )
 
                     c_cpm4.text_input(
                         "Tipo",
+                        texto_limpio(
                         registro_cpm.get(
                             "tipo",
                             ""
-                        ),
+                        )
+                    ),
                         disabled=True
                     )
 
@@ -3052,19 +3207,23 @@ if menu == "Registrar incidencia":
 
                     c_cpm5.text_input(
                         "Unidad CPM",
+                        texto_limpio(
                         registro_cpm.get(
                             "unidad",
                             ""
-                        ),
+                        )
+                    ),
                         disabled=True
                     )
 
                     c_cpm6.text_input(
                         "Grupo terapéutico CPM",
+                        texto_limpio(
                         registro_cpm.get(
                             "grupo_terapeutico",
                             ""
-                        ),
+                        )
+                    ),
                         disabled=True
                     )
 
@@ -3087,9 +3246,8 @@ if menu == "Registrar incidencia":
                             "Ver coincidencias CPM"
                         ):
 
-                            st.dataframe(
-                                resultados_cpm,
-                                use_container_width=True
+                            dataframe_limpio(
+                                resultados_cpm
                             )
 
                 else:
@@ -3145,19 +3303,23 @@ if menu == "Registrar incidencia":
 
                     c_inv3.text_input(
                         "Caducidad más próxima",
+                        texto_limpio(
                         inventario_clues.get(
                             "caducidad_minima",
                             ""
-                        ),
+                        )
+                    ),
                         disabled=True
                     )
 
                     c_inv4.text_input(
                         "Estatus inventario",
+                        texto_limpio(
                         inventario_clues.get(
                             "estatus",
                             ""
-                        ),
+                        )
+                    ),
                         disabled=True
                     )
 
@@ -3175,9 +3337,8 @@ if menu == "Registrar incidencia":
                             "Ver detalle de inventario por lote"
                         ):
 
-                            st.dataframe(
-                                resultados_inv,
-                                use_container_width=True
+                            dataframe_limpio(
+                                resultados_inv
                             )
 
                 else:
@@ -3522,9 +3683,8 @@ if menu == "Registrar incidencia":
                 st.session_state["preview_masivo"]
             )
 
-            st.dataframe(
-                preview_df,
-                use_container_width=True
+            dataframe_limpio(
+                preview_df
             )
 
             encontradas = preview_df[
@@ -3778,9 +3938,8 @@ elif menu == "Seguimiento":
             if c in df_seg.columns
         ]
 
-        st.dataframe(
-            df_seg[columnas_mostrar],
-            use_container_width=True
+        dataframe_limpio(
+            df_seg[columnas_mostrar]
         )
 
         excel = convertir_excel(
@@ -3828,9 +3987,8 @@ elif menu == "Base Supabase":
         respuesta.data
     )
 
-    st.dataframe(
-        muestra,
-        use_container_width=True
+    dataframe_limpio(
+        muestra
     )
 
-# version seguimiento 2026
+# version seguimiento 2026	
