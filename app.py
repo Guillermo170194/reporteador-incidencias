@@ -1262,6 +1262,170 @@ def formatear_importe(
     return f"${numero:,.2f}"
 
 
+def formatear_numero(
+    valor
+):
+
+    numero = convertir_numero(
+        valor
+    )
+
+    if numero == 0:
+
+        return "0"
+
+    return f"{numero:,.0f}"
+
+
+def obtener_inventario_clues_supabase(
+    clues,
+    clave_cnis
+):
+
+    clues_norm = normalizar_clues_cpm(
+        clues
+    )
+
+    clave_norm = normalizar_clave_cnis(
+        clave_cnis
+    )
+
+    if (
+        not clues_norm
+        or not clave_norm
+    ):
+
+        return {
+            "encontrado": False,
+            "total_piezas": 0,
+            "lotes": 0,
+            "caducidad_minima": "",
+            "estatus": "SIN DATOS",
+            "resultados": pd.DataFrame()
+        }
+
+    columnas = (
+        "entidad, clues, unidad, clave_cnis, descripcion, "
+        "piezas, lote, estatus, caducidad"
+    )
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "inventario_clues"
+            )
+            .select(
+                columnas
+            )
+            .eq(
+                "clues",
+                clues_norm
+            )
+            .eq(
+                "clave_cnis",
+                clave_norm
+            )
+            .limit(
+                500
+            )
+            .execute()
+        )
+
+        datos = respuesta.data
+
+        if not datos:
+
+            return {
+                "encontrado": False,
+                "total_piezas": 0,
+                "lotes": 0,
+                "caducidad_minima": "",
+                "estatus": "SIN INVENTARIO",
+                "resultados": pd.DataFrame()
+            }
+
+        resultados = pd.DataFrame(
+            datos
+        )
+
+        if "piezas" in resultados.columns:
+
+            resultados["_piezas_num"] = resultados[
+                "piezas"
+            ].apply(
+                convertir_numero
+            )
+
+            total_piezas = resultados[
+                "_piezas_num"
+            ].sum()
+
+        else:
+
+            total_piezas = 0
+
+        lotes = 0
+
+        if "lote" in resultados.columns:
+
+            lotes = resultados[
+                "lote"
+            ].astype(str).str.strip().replace(
+                "",
+                pd.NA
+            ).dropna().nunique()
+
+        caducidad_minima = ""
+
+        if "caducidad" in resultados.columns:
+
+            fechas = pd.to_datetime(
+                resultados["caducidad"],
+                errors="coerce"
+            ).dropna()
+
+            if len(fechas) > 0:
+
+                caducidad_minima = fechas.min().strftime(
+                    "%d/%m/%Y"
+                )
+
+        estatus = "CON INVENTARIO"
+
+        if total_piezas <= 0:
+
+            estatus = "SIN PIEZAS"
+
+        resultados = resultados.drop(
+            columns=[
+                "_piezas_num"
+            ],
+            errors="ignore"
+        )
+
+        return {
+            "encontrado": True,
+            "total_piezas": total_piezas,
+            "lotes": lotes,
+            "caducidad_minima": caducidad_minima,
+            "estatus": estatus,
+            "resultados": resultados
+        }
+
+    except Exception as e:
+
+        return {
+            "encontrado": False,
+            "total_piezas": 0,
+            "lotes": 0,
+            "caducidad_minima": "",
+            "estatus": f"ERROR INVENTARIO: {e}",
+            "resultados": pd.DataFrame()
+        }
+
+
 def existe_incidencia_duplicada(
     orden,
     tipo_incidencia,
@@ -2119,6 +2283,11 @@ def obtener_datos_orden_para_registro(
         clave
     )
 
+    inventario_clues = obtener_inventario_clues_supabase(
+        clues_destino,
+        clave
+    )
+
     datos = {
         "resultado": resultado,
         "fila": fila,
@@ -2143,7 +2312,8 @@ def obtener_datos_orden_para_registro(
         "estatus_recepcion_ol": estatus_recepcion_ol,
         "estatus_entrega_estado": estatus_entrega_estado,
         "estatus_completa": estatus_completa,
-        "cpm_clues": cpm_clues
+        "cpm_clues": cpm_clues,
+        "inventario_clues": inventario_clues
     }
 
     return datos, resultado
@@ -2500,6 +2670,17 @@ if menu == "Registrar incidencia":
                         "resultados": pd.DataFrame()
                     }
                 )
+                inventario_clues = datos_orden.get(
+                    "inventario_clues",
+                    {
+                        "encontrado": False,
+                        "total_piezas": 0,
+                        "lotes": 0,
+                        "caducidad_minima": "",
+                        "estatus": "NO CONSULTADO",
+                        "resultados": pd.DataFrame()
+                    }
+                )
                 estatus_recepcion_ol = datos_orden["estatus_recepcion_ol"]
                 estatus_entrega_estado = datos_orden["estatus_entrega_estado"]
                 estatus_completa = datos_orden["estatus_completa"]
@@ -2814,6 +2995,94 @@ if menu == "Registrar incidencia":
                         "⚪ La CLUES destino no tiene CPM registrado para esta clave."
                     )
 
+                st.subheader(
+                    "📦 Inventario actual por CLUES"
+                )
+
+                if inventario_clues.get(
+                    "encontrado",
+                    False
+                ):
+
+                    total_inv = inventario_clues.get(
+                        "total_piezas",
+                        0
+                    )
+
+                    if total_inv > 0:
+
+                        st.success(
+                            "✅ La CLUES tiene inventario registrado para esta clave."
+                        )
+
+                    else:
+
+                        st.warning(
+                            "⚠️ La CLUES aparece en inventario, pero sin piezas disponibles."
+                        )
+
+                    c_inv1, c_inv2, c_inv3, c_inv4 = st.columns(
+                        4
+                    )
+
+                    c_inv1.metric(
+                        "Piezas inventario",
+                        formatear_numero(
+                            total_inv
+                        )
+                    )
+
+                    c_inv2.metric(
+                        "Lotes",
+                        inventario_clues.get(
+                            "lotes",
+                            0
+                        )
+                    )
+
+                    c_inv3.text_input(
+                        "Caducidad más próxima",
+                        inventario_clues.get(
+                            "caducidad_minima",
+                            ""
+                        ),
+                        disabled=True
+                    )
+
+                    c_inv4.text_input(
+                        "Estatus inventario",
+                        inventario_clues.get(
+                            "estatus",
+                            ""
+                        ),
+                        disabled=True
+                    )
+
+                    resultados_inv = inventario_clues.get(
+                        "resultados",
+                        pd.DataFrame()
+                    )
+
+                    if isinstance(
+                        resultados_inv,
+                        pd.DataFrame
+                    ):
+
+                        with st.expander(
+                            "Ver detalle de inventario por lote"
+                        ):
+
+                            st.dataframe(
+                                resultados_inv,
+                                use_container_width=True
+                            )
+
+                else:
+
+                    st.warning(
+                        "⚪ La CLUES destino no tiene inventario registrado para esta clave."
+                    )
+
                 st.divider()
 
                 st.subheader(
@@ -3122,6 +3391,14 @@ if menu == "Registrar incidencia":
                     {}
                 ) or {}
 
+                inventario_m = datos_m.get(
+                    "inventario_clues",
+                    {
+                        "encontrado": False,
+                        "total_piezas": 0
+                    }
+                )
+
                 registros_preview.append(
                     {
                         "ORDEN": datos_m["orden"],
@@ -3131,6 +3408,8 @@ if menu == "Registrar incidencia":
                         "PROVEEDOR": datos_m["proveedor"],
                         "CPM": "SI" if cpm_m.get("encontrado", False) else "NO",
                         "CPM_MENSUAL": registro_cpm_m.get("cpm", ""),
+                        "INVENTARIO": "SI" if inventario_m.get("encontrado", False) else "NO",
+                        "PIEZAS_INVENTARIO": inventario_m.get("total_piezas", 0),
                         "INCIDENCIAS_PREVIAS": len(previas_m),
                         "CITA": fecha_cita_m
                     }
