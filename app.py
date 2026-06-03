@@ -441,6 +441,31 @@ ATRIBUIBLES = [
     "Otro"
 ]
 
+
+
+RESPONSABLES_FIJOS = {
+    "YAIR OSWALDO GONZÁLEZ GARCÍA": [
+        "ALEJANDRA PAOLA HUERTA FERNANDEZ",
+        "EMILY ESTEFANÍA SÁNCHEZ HERNÁNDEZ",
+        "JESUS RICANO MURRIETA"
+    ],
+    "OSCAR IVÁN FERNÁNDEZ JIMÉNEZ": [
+        "MARÍA FERNANDA IRALA CERVANTES",
+        "MARIBEL RIVERA LUNA",
+        "FABIOLA GÓMEZ RAMÍREZ"
+    ]
+}
+
+MONITORES = []
+
+for subdirector, lista_monitoras in RESPONSABLES_FIJOS.items():
+
+    for monitora in lista_monitoras:
+
+        MONITORES.append(
+            f"{subdirector} | {monitora}"
+        )
+
 TIPOS_INCIDENCIA_GENERAL = [
     "Falta de cita",
     "Documentación errónea",
@@ -3429,8 +3454,9 @@ if menu == "Registrar incidencia":
                         ]
                     )
 
-                responsable = st.text_input(
-                    "Responsable"
+                responsable = st.selectbox(
+                    "Responsable",
+                    MONITORES
                 )
 
                 observaciones = st.text_area(
@@ -3576,8 +3602,9 @@ if menu == "Registrar incidencia":
                 key="masivo_estatus"
             )
 
-        responsable_m = st.text_input(
+        responsable_m = st.selectbox(
             "Responsable",
+            MONITORES,
             key="masivo_responsable"
         )
 
