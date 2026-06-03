@@ -902,7 +902,7 @@ def cargar_incidencias():
         "ESTATUS_INCIDENCIA_COMPLETA": "INCOMPLETA",
         "TIPO_INCIDENCIA": "",
         "ATRIBUIBLE A": "",
-        "ESTATUS_INCIDENCIA": "Pendiente",
+        "ESTATUS_INCIDENCIA": "En proceso",
         "RESPONSABLE": "",
         "OBSERVACIONES": "",
         "PDF_CEDULA_RECHAZO": "",
@@ -1080,6 +1080,74 @@ def obtener_incidencias_previas_supabase(
 
         return pd.DataFrame()
 
+    columnas_orden = [
+        "orden_suministro",
+        "orden",
+        "orden_buscada"
+    ]
+
+    resultados = []
+
+    # Primero intenta búsquedas exactas con índice.
+    for columna in columnas_orden:
+
+        try:
+
+            respuesta = (
+                supabase
+                .table(
+                    "incidencias"
+                )
+                .select(
+                    "*"
+                )
+                .eq(
+                    columna,
+                    orden_norm
+                )
+                .order(
+                    "id",
+                    desc=True
+                )
+                .limit(
+                    100
+                )
+                .execute()
+            )
+
+            if respuesta.data:
+
+                resultados.extend(
+                    respuesta.data
+                )
+
+        except Exception:
+
+            continue
+
+    if resultados:
+
+        previas = pd.DataFrame(
+            resultados
+        )
+
+        if "id" in previas.columns:
+
+            previas = previas.drop_duplicates(
+                subset=[
+                    "id"
+                ]
+            )
+
+            previas = previas.sort_values(
+                "id",
+                ascending=False
+            )
+
+        return previas
+
+    # Fallback: si la orden se guardó con espacios, guiones raros o formato distinto,
+    # trae las últimas incidencias y compara normalizado. La tabla es chica y evita falsos negativos.
     try:
 
         respuesta = (
@@ -1090,15 +1158,12 @@ def obtener_incidencias_previas_supabase(
             .select(
                 "*"
             )
-            .or_(
-                f"orden_suministro.eq.{orden_norm},orden.eq.{orden_norm},orden_buscada.eq.{orden_norm}"
-            )
             .order(
                 "id",
                 desc=True
             )
             .limit(
-                100
+                10000
             )
             .execute()
         )
@@ -1109,13 +1174,48 @@ def obtener_incidencias_previas_supabase(
 
             return pd.DataFrame()
 
-        return pd.DataFrame(
+        previas = pd.DataFrame(
             datos
         )
 
-    except Exception:
+        mascara = pd.Series(
+            False,
+            index=previas.index
+        )
+
+        for columna in columnas_orden:
+
+            if columna in previas.columns:
+
+                mascara = (
+                    mascara
+                    | previas[columna]
+                    .astype(str)
+                    .apply(normalizar_orden)
+                    .eq(orden_norm)
+                )
+
+        previas = previas[
+            mascara
+        ].copy()
+
+        if "id" in previas.columns:
+
+            previas = previas.sort_values(
+                "id",
+                ascending=False
+            )
+
+        return previas
+
+    except Exception as e:
+
+        st.warning(
+            f"No se pudieron consultar incidencias previas: {e}"
+        )
 
         return pd.DataFrame()
+
 
 def normalizar_clues_cpm(
     valor
@@ -1432,48 +1532,51 @@ def existe_incidencia_duplicada(
     atribuible_a
 ):
 
-    orden_norm = normalizar_orden(
+    previas = obtener_incidencias_previas_supabase(
         orden
     )
 
-    if not orden_norm:
+    if previas.empty:
 
         return False
 
-    try:
+    tipo_norm = str(
+        tipo_incidencia
+    ).upper().strip()
 
-        respuesta = (
-            supabase
-            .table(
-                "incidencias"
-            )
-            .select(
-                "id"
-            )
-            .or_(
-                f"orden_suministro.eq.{orden_norm},orden.eq.{orden_norm},orden_buscada.eq.{orden_norm}"
-            )
-            .eq(
-                "tipo_incidencia",
-                tipo_incidencia
-            )
-            .eq(
-                "atribuible_a",
-                atribuible_a
-            )
-            .limit(
-                1
-            )
-            .execute()
+    atribuible_norm = str(
+        atribuible_a
+    ).upper().strip()
+
+    if "tipo_incidencia" not in previas.columns:
+
+        previas["tipo_incidencia"] = ""
+
+    if "atribuible_a" not in previas.columns:
+
+        previas["atribuible_a"] = ""
+
+    duplicada = previas[
+        (
+            previas["tipo_incidencia"]
+            .astype(str)
+            .str.upper()
+            .str.strip()
+            == tipo_norm
         )
+        &
+        (
+            previas["atribuible_a"]
+            .astype(str)
+            .str.upper()
+            .str.strip()
+            == atribuible_norm
+        )
+    ]
 
-        return len(
-            respuesta.data
-        ) > 0
-
-    except Exception:
-
-        return False
+    return len(
+        duplicada
+    ) > 0
 
 
 @st.cache_data(
@@ -1516,7 +1619,7 @@ def cargar_resumen_incidencias():
         incidencias_temp["ESTATUS_INCIDENCIA"]
         .astype(str)
         .str.upper()
-        .eq("RESUELTA")
+        .isin(["RESUELTA", "RESUELTO"])
     ].shape[0]
 
     porcentaje = 0
@@ -3159,11 +3262,9 @@ if menu == "Registrar incidencia":
                     estatus = st.selectbox(
                         "Estatus incidencia",
                         [
-                            "Pendiente",
                             "En proceso",
-                            "Escalado",
-                            "Resuelta",
-                            "Cancelada"
+                            "Rechazado",
+                            "Resuelto"
                         ]
                     )
 
@@ -3307,11 +3408,9 @@ if menu == "Registrar incidencia":
             estatus_m = st.selectbox(
                 "Estatus incidencia",
                 [
-                    "Pendiente",
                     "En proceso",
-                    "Escalado",
-                    "Resuelta",
-                    "Cancelada"
+                    "Rechazado",
+                    "Resuelto"
                 ],
                 key="masivo_estatus"
             )
@@ -3564,9 +3663,11 @@ elif menu == "Seguimiento":
             .str.upper()
             .map(
                 {
-                    "RESUELTA": "🟢 Resuelta",
-                    "PENDIENTE": "🟡 Pendiente",
+                    "RESUELTA": "🟢 Resuelto",
+                    "RESUELTO": "🟢 Resuelto",
                     "EN PROCESO": "🟠 En proceso",
+                    "RECHAZADO": "🔴 Rechazado",
+                    "PENDIENTE": "🟡 Pendiente",
                     "ESCALADO": "🔴 Escalado",
                     "CANCELADA": "⚫ Cancelada"
                 }
