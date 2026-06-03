@@ -1117,6 +1117,150 @@ def obtener_incidencias_previas_supabase(
 
         return pd.DataFrame()
 
+def normalizar_clues_cpm(
+    valor
+):
+
+    texto = (
+        str(valor)
+        .upper()
+        .strip()
+        .replace(" ", "")
+        .replace("None", "")
+        .replace("NAN", "")
+        .replace("-", "")
+    )
+
+    return texto
+
+
+def normalizar_clave_cnis(
+    valor
+):
+
+    return (
+        str(valor)
+        .upper()
+        .strip()
+        .replace(" ", "")
+        .replace("None", "")
+        .replace("NAN", "")
+    )
+
+
+def obtener_cpm_clues_supabase(
+    clues,
+    clave_cnis
+):
+
+    clues_norm = normalizar_clues_cpm(
+        clues
+    )
+
+    clave_norm = normalizar_clave_cnis(
+        clave_cnis
+    )
+
+    if (
+        not clues_norm
+        or not clave_norm
+    ):
+
+        return {
+            "encontrado": False,
+            "criterio": "SIN DATOS",
+            "registro": None,
+            "resultados": pd.DataFrame()
+        }
+
+    columnas = (
+        "entidad, clues_ssa, clues_imss_b, clues_busqueda, "
+        "unidad, tipo, clave_cnis, descripcion, cpm, "
+        "grupo_terapeutico, precio_unitario, iva, importe"
+    )
+
+    consultas = [
+        (
+            "CLUES IMSS-B",
+            "clues_imss_b"
+        ),
+        (
+            "CLUES SSA",
+            "clues_ssa"
+        ),
+        (
+            "CLUES BUSQUEDA",
+            "clues_busqueda"
+        )
+    ]
+
+    for criterio, columna_clues in consultas:
+
+        try:
+
+            respuesta = (
+                supabase
+                .table(
+                    "cpm_clues"
+                )
+                .select(
+                    columnas
+                )
+                .eq(
+                    columna_clues,
+                    clues_norm
+                )
+                .eq(
+                    "clave_cnis",
+                    clave_norm
+                )
+                .limit(
+                    20
+                )
+                .execute()
+            )
+
+            datos = respuesta.data
+
+            if datos:
+
+                resultados = pd.DataFrame(
+                    datos
+                )
+
+                return {
+                    "encontrado": True,
+                    "criterio": criterio,
+                    "registro": datos[0],
+                    "resultados": resultados
+                }
+
+        except Exception:
+
+            continue
+
+    return {
+        "encontrado": False,
+        "criterio": "NO ENCONTRADO",
+        "registro": None,
+        "resultados": pd.DataFrame()
+    }
+
+
+def formatear_importe(
+    valor
+):
+
+    numero = convertir_numero(
+        valor
+    )
+
+    if numero == 0:
+
+        return "$0.00"
+
+    return f"${numero:,.2f}"
+
 
 def existe_incidencia_duplicada(
     orden,
@@ -1970,6 +2114,11 @@ def obtener_datos_orden_para_registro(
         estatus_entrega_estado
     )
 
+    cpm_clues = obtener_cpm_clues_supabase(
+        clues_destino,
+        clave
+    )
+
     datos = {
         "resultado": resultado,
         "fila": fila,
@@ -1993,7 +2142,8 @@ def obtener_datos_orden_para_registro(
         "estatus_orden": estatus_orden,
         "estatus_recepcion_ol": estatus_recepcion_ol,
         "estatus_entrega_estado": estatus_entrega_estado,
-        "estatus_completa": estatus_completa
+        "estatus_completa": estatus_completa,
+        "cpm_clues": cpm_clues
     }
 
     return datos, resultado
@@ -2341,6 +2491,15 @@ if menu == "Registrar incidencia":
                 tipo_red = datos_orden["tipo_red"]
                 grupo_terapeutico = datos_orden["grupo_terapeutico"]
                 estatus_orden = datos_orden["estatus_orden"]
+                cpm_clues = datos_orden.get(
+                    "cpm_clues",
+                    {
+                        "encontrado": False,
+                        "criterio": "NO CONSULTADO",
+                        "registro": None,
+                        "resultados": pd.DataFrame()
+                    }
+                )
                 estatus_recepcion_ol = datos_orden["estatus_recepcion_ol"]
                 estatus_entrega_estado = datos_orden["estatus_entrega_estado"]
                 estatus_completa = datos_orden["estatus_completa"]
@@ -2544,6 +2703,118 @@ if menu == "Registrar incidencia":
                     descripcion,
                     disabled=True
                 )
+
+                st.subheader(
+                    "📈 Indicador CPM por CLUES"
+                )
+
+                if cpm_clues.get(
+                    "encontrado",
+                    False
+                ):
+
+                    registro_cpm = cpm_clues.get(
+                        "registro",
+                        {}
+                    )
+
+                    st.success(
+                        f"✅ La CLUES tiene CPM registrado para esta clave ({cpm_clues.get('criterio', '')})."
+                    )
+
+                    c_cpm1, c_cpm2, c_cpm3, c_cpm4 = st.columns(
+                        4
+                    )
+
+                    c_cpm1.metric(
+                        "CPM mensual",
+                        registro_cpm.get(
+                            "cpm",
+                            ""
+                        )
+                    )
+
+                    c_cpm2.metric(
+                        "Importe mensual",
+                        formatear_importe(
+                            registro_cpm.get(
+                                "importe",
+                                ""
+                            )
+                        )
+                    )
+
+                    c_cpm3.text_input(
+                        "CLUES CPM",
+                        registro_cpm.get(
+                            "clues_busqueda",
+                            ""
+                        ),
+                        disabled=True
+                    )
+
+                    c_cpm4.text_input(
+                        "Tipo",
+                        registro_cpm.get(
+                            "tipo",
+                            ""
+                        ),
+                        disabled=True
+                    )
+
+                    c_cpm5, c_cpm6 = st.columns(
+                        2
+                    )
+
+                    c_cpm5.text_input(
+                        "Unidad CPM",
+                        registro_cpm.get(
+                            "unidad",
+                            ""
+                        ),
+                        disabled=True
+                    )
+
+                    c_cpm6.text_input(
+                        "Grupo terapéutico CPM",
+                        registro_cpm.get(
+                            "grupo_terapeutico",
+                            ""
+                        ),
+                        disabled=True
+                    )
+
+                    resultados_cpm = cpm_clues.get(
+                        "resultados",
+                        pd.DataFrame()
+                    )
+
+                    if (
+                        isinstance(
+                            resultados_cpm,
+                            pd.DataFrame
+                        )
+                        and len(
+                            resultados_cpm
+                        ) > 1
+                    ):
+
+                        with st.expander(
+                            "Ver coincidencias CPM"
+                        ):
+
+                            st.dataframe(
+                                resultados_cpm,
+                                use_container_width=True
+                            )
+
+                else:
+
+                    st.warning(
+                        "⚪ La CLUES destino no tiene CPM registrado para esta clave."
+                    )
+
+                st.divider()
 
                 st.subheader(
                     "🚚 Validación logística"
@@ -2838,6 +3109,19 @@ if menu == "Registrar incidencia":
                         )
                     )
 
+                cpm_m = datos_m.get(
+                    "cpm_clues",
+                    {
+                        "encontrado": False,
+                        "registro": {}
+                    }
+                )
+
+                registro_cpm_m = cpm_m.get(
+                    "registro",
+                    {}
+                ) or {}
+
                 registros_preview.append(
                     {
                         "ORDEN": datos_m["orden"],
@@ -2845,6 +3129,8 @@ if menu == "Registrar incidencia":
                         "ENTIDAD": datos_m["entidad"],
                         "CLUES": datos_m["clues_destino"],
                         "PROVEEDOR": datos_m["proveedor"],
+                        "CPM": "SI" if cpm_m.get("encontrado", False) else "NO",
+                        "CPM_MENSUAL": registro_cpm_m.get("cpm", ""),
                         "INCIDENCIAS_PREVIAS": len(previas_m),
                         "CITA": fecha_cita_m
                     }
