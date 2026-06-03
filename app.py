@@ -1118,6 +1118,56 @@ def obtener_incidencias_previas_supabase(
         return pd.DataFrame()
 
 
+def existe_incidencia_duplicada(
+    orden,
+    tipo_incidencia,
+    atribuible_a
+):
+
+    orden_norm = normalizar_orden(
+        orden
+    )
+
+    if not orden_norm:
+
+        return False
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "incidencias"
+            )
+            .select(
+                "id"
+            )
+            .or_(
+                f"orden_suministro.eq.{orden_norm},orden.eq.{orden_norm},orden_buscada.eq.{orden_norm}"
+            )
+            .eq(
+                "tipo_incidencia",
+                tipo_incidencia
+            )
+            .eq(
+                "atribuible_a",
+                atribuible_a
+            )
+            .limit(
+                1
+            )
+            .execute()
+        )
+
+        return len(
+            respuesta.data
+        ) > 0
+
+    except Exception:
+
+        return False
+
+
 @st.cache_data(
     ttl=300,
     show_spinner="Cargando resumen ejecutivo..."
@@ -2646,17 +2696,31 @@ if menu == "Registrar incidencia":
                         ruta_correo
                     )
 
-                    guardar_incidencia(
-                        nueva
+                    duplicada = existe_incidencia_duplicada(
+                        orden,
+                        tipo,
+                        atribuible
                     )
 
-                    st.success(
-                        "Incidencia guardada correctamente."
-                    )
+                    if duplicada:
 
-                    st.cache_data.clear()
+                        st.warning(
+                            "Esta orden ya tiene una incidencia igual registrada."
+                        )
 
-                    st.rerun()
+                    else:
+
+                        guardar_incidencia(
+                            nueva
+                        )
+
+                        st.success(
+                            "Incidencia guardada correctamente."
+                        )
+
+                        st.cache_data.clear()
+
+                        st.rerun()
 
     else:
 
@@ -2848,6 +2912,16 @@ if menu == "Registrar incidencia":
 
                                 continue
 
+                            duplicada_m = existe_incidencia_duplicada(
+                                datos_m["orden"],
+                                tipo_m,
+                                atribuible_m
+                            )
+
+                            if duplicada_m:
+
+                                continue
+
                             nueva_m = construir_registro_incidencia(
                                 orden_m,
                                 datos_m,
@@ -2906,25 +2980,154 @@ if menu == "Registrar incidencia":
 elif menu == "Seguimiento":
 
     st.subheader(
-        "📋 Seguimiento"
+        "📋 Seguimiento de incidencias"
     )
 
-    st.dataframe(
-        incidencias,
-        use_container_width=True
-    )
+    df_seg = incidencias.copy()
 
-    excel = convertir_excel(
-        incidencias
-    )
+    if df_seg.empty:
 
-    st.download_button(
-        label="⬇️ Descargar incidencias en Excel",
-        data=excel,
-        file_name="reporte_incidencias.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+        st.info(
+            "Aún no hay incidencias registradas."
+        )
+
+    else:
+
+        df_seg["SEMAFORO"] = (
+            df_seg["ESTATUS_INCIDENCIA"]
+            .astype(str)
+            .str.upper()
+            .map(
+                {
+                    "RESUELTA": "🟢 Resuelta",
+                    "PENDIENTE": "🟡 Pendiente",
+                    "EN PROCESO": "🟠 En proceso",
+                    "ESCALADO": "🔴 Escalado",
+                    "CANCELADA": "⚫ Cancelada"
+                }
+            )
+            .fillna(
+                "⚪ Sin estatus"
+            )
+        )
+
+        c1, c2, c3, c4 = st.columns(
+            4
+        )
+
+        entidad_filtro = c1.selectbox(
+            "Entidad",
+            ["Todas"] + sorted(
+                df_seg["ENTIDAD"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+        )
+
+        estatus_filtro = c2.selectbox(
+            "Estatus",
+            ["Todos"] + sorted(
+                df_seg["ESTATUS_INCIDENCIA"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+        )
+
+        atribuible_filtro = c3.selectbox(
+            "Atribuible a",
+            ["Todos"] + sorted(
+                df_seg["ATRIBUIBLE A"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+        )
+
+        buscar_orden = c4.text_input(
+            "Buscar orden"
+        )
+
+        if entidad_filtro != "Todas":
+
+            df_seg = df_seg[
+                df_seg["ENTIDAD"].astype(str) == entidad_filtro
+            ]
+
+        if estatus_filtro != "Todos":
+
+            df_seg = df_seg[
+                df_seg["ESTATUS_INCIDENCIA"].astype(str) == estatus_filtro
+            ]
+
+        if atribuible_filtro != "Todos":
+
+            df_seg = df_seg[
+                df_seg["ATRIBUIBLE A"].astype(str) == atribuible_filtro
+            ]
+
+        if buscar_orden.strip():
+
+            orden_norm = normalizar_orden(
+                buscar_orden
+            )
+
+            df_seg = df_seg[
+                df_seg["ORDEN"]
+                .astype(str)
+                .apply(normalizar_orden)
+                .str.contains(
+                    orden_norm,
+                    na=False,
+                    regex=False
+                )
+            ]
+
+        st.caption(
+            f"Registros mostrados: {len(df_seg):,}"
+        )
+
+        columnas_mostrar = [
+            "SEMAFORO",
+            "FECHA_REGISTRO",
+            "ENTIDAD",
+            "ORDEN",
+            "CLAVE_CNIS",
+            "PROVEEDOR",
+            "TIPO_INCIDENCIA",
+            "ATRIBUIBLE A",
+            "ESTATUS_INCIDENCIA",
+            "RESPONSABLE",
+            "OBSERVACIONES",
+            "PDF_CEDULA_RECHAZO",
+            "PDF_CORREO_SEGUIMIENTO"
+        ]
+
+        columnas_mostrar = [
+            c for c in columnas_mostrar
+            if c in df_seg.columns
+        ]
+
+        st.dataframe(
+            df_seg[columnas_mostrar],
+            use_container_width=True
+        )
+
+        excel = convertir_excel(
+            df_seg
+        )
+
+        st.download_button(
+            label="⬇️ Descargar incidencias filtradas en Excel",
+            data=excel,
+            file_name="reporte_incidencias_filtrado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 
 # =========================
@@ -2963,3 +3166,5 @@ elif menu == "Base Supabase":
         muestra,
         use_container_width=True
     )
+
+# version seguimiento 2026
