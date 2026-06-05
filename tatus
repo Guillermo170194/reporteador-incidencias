@@ -1,0 +1,287 @@
+[1mdiff --git a/app.py b/app.py[m
+[1mindex ec7db7b..f9c1413 100644[m
+[1m--- a/app.py[m
+[1m+++ b/app.py[m
+[36m@@ -1118,6 +1118,56 @@[m [mdef obtener_incidencias_previas_supabase([m
+         return pd.DataFrame()[m
+ [m
+ [m
+[32m+[m[32mdef existe_incidencia_duplicada([m
+[32m+[m[32m    orden,[m
+[32m+[m[32m    tipo_incidencia,[m
+[32m+[m[32m    atribuible_a[m
+[32m+[m[32m):[m
+[32m+[m
+[32m+[m[32m    orden_norm = normalizar_orden([m
+[32m+[m[32m        orden[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if not orden_norm:[m
+[32m+[m
+[32m+[m[32m        return False[m
+[32m+[m
+[32m+[m[32m    try:[m
+[32m+[m
+[32m+[m[32m        respuesta = ([m
+[32m+[m[32m            supabase[m
+[32m+[m[32m            .table([m
+[32m+[m[32m                "incidencias"[m
+[32m+[m[32m            )[m
+[32m+[m[32m            .select([m
+[32m+[m[32m                "id"[m
+[32m+[m[32m            )[m
+[32m+[m[32m            .or_([m
+[32m+[m[32m                f"orden_suministro.eq.{orden_norm},orden.eq.{orden_norm},orden_buscada.eq.{orden_norm}"[m
+[32m+[m[32m            )[m
+[32m+[m[32m            .eq([m
+[32m+[m[32m                "tipo_incidencia",[m
+[32m+[m[32m                tipo_incidencia[m
+[32m+[m[32m            )[m
+[32m+[m[32m            .eq([m
+[32m+[m[32m                "atribuible_a",[m
+[32m+[m[32m                atribuible_a[m
+[32m+[m[32m            )[m
+[32m+[m[32m            .limit([m
+[32m+[m[32m                1[m
+[32m+[m[32m            )[m
+[32m+[m[32m            .execute()[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        return len([m
+[32m+[m[32m            respuesta.data[m
+[32m+[m[32m        ) > 0[m
+[32m+[m
+[32m+[m[32m    except Exception:[m
+[32m+[m
+[32m+[m[32m        return False[m
+[32m+[m
+[32m+[m
+ @st.cache_data([m
+     ttl=300,[m
+     show_spinner="Cargando resumen ejecutivo..."[m
+[36m@@ -2646,17 +2696,31 @@[m [mif menu == "Registrar incidencia":[m
+                         ruta_correo[m
+                     )[m
+ [m
+[31m-                    guardar_incidencia([m
+[31m-                        nueva[m
+[32m+[m[32m                    duplicada = existe_incidencia_duplicada([m
+[32m+[m[32m                        orden,[m
+[32m+[m[32m                        tipo,[m
+[32m+[m[32m                        atribuible[m
+                     )[m
+ [m
+[31m-                    st.success([m
+[31m-                        "Incidencia guardada correctamente."[m
+[31m-                    )[m
+[32m+[m[32m                    if duplicada:[m
+[32m+[m
+[32m+[m[32m                        st.warning([m
+[32m+[m[32m                            "Esta orden ya tiene una incidencia igual registrada."[m
+[32m+[m[32m                        )[m
+ [m
+[31m-                    st.cache_data.clear()[m
+[32m+[m[32m                    else:[m
+[32m+[m
+[32m+[m[32m                        guardar_incidencia([m
+[32m+[m[32m                            nueva[m
+[32m+[m[32m                        )[m
+[32m+[m
+[32m+[m[32m                        st.success([m
+[32m+[m[32m                            "Incidencia guardada correctamente."[m
+[32m+[m[32m                        )[m
+ [m
+[31m-                    st.rerun()[m
+[32m+[m[32m                        st.cache_data.clear()[m
+[32m+[m
+[32m+[m[32m                        st.rerun()[m
+ [m
+     else:[m
+ [m
+[36m@@ -2848,6 +2912,16 @@[m [mif menu == "Registrar incidencia":[m
+ [m
+                                 continue[m
+ [m
+[32m+[m[32m                            duplicada_m = existe_incidencia_duplicada([m
+[32m+[m[32m                                datos_m["orden"],[m
+[32m+[m[32m                                tipo_m,[m
+[32m+[m[32m                                atribuible_m[m
+[32m+[m[32m                            )[m
+[32m+[m
+[32m+[m[32m                            if duplicada_m:[m
+[32m+[m
+[32m+[m[32m                                continue[m
+[32m+[m
+                             nueva_m = construir_registro_incidencia([m
+                                 orden_m,[m
+                                 datos_m,[m
+[36m@@ -2906,25 +2980,154 @@[m [mif menu == "Registrar incidencia":[m
+ elif menu == "Seguimiento":[m
+ [m
+     st.subheader([m
+[31m-        "📋 Seguimiento"[m
+[32m+[m[32m        "📋 Seguimiento de incidencias"[m
+     )[m
+ [m
+[31m-    st.dataframe([m
+[31m-        incidencias,[m
+[31m-        use_container_width=True[m
+[31m-    )[m
+[32m+[m[32m    df_seg = incidencias.copy()[m
+ [m
+[31m-    excel = convertir_excel([m
+[31m-        incidencias[m
+[31m-    )[m
+[32m+[m[32m    if df_seg.empty:[m
+ [m
+[31m-    st.download_button([m
+[31m-        label="⬇️ Descargar incidencias en Excel",[m
+[31m-        data=excel,[m
+[31m-        file_name="reporte_incidencias.xlsx",[m
+[31m-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",[m
+[31m-        use_container_width=True[m
+[31m-    )[m
+[32m+[m[32m        st.info([m
+[32m+[m[32m            "Aún no hay incidencias registradas."[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m    else:[m
+[32m+[m
+[32m+[m[32m        df_seg["SEMAFORO"] = ([m
+[32m+[m[32m            df_seg["ESTATUS_INCIDENCIA"][m
+[32m+[m[32m            .astype(str)[m
+[32m+[m[32m            .str.upper()[m
+[32m+[m[32m            .map([m
+[32m+[m[32m                {[m
+[32m+[m[32m                    "RESUELTA": "🟢 Resuelta",[m
+[32m+[m[32m                    "PENDIENTE": "🟡 Pendiente",[m
+[32m+[m[32m                    "EN PROCESO": "🟠 En proceso",[m
+[32m+[m[32m                    "ESCALADO": "🔴 Escalado",[m
+[32m+[m[32m                    "CANCELADA": "⚫ Cancelada"[m
+[32m+[m[32m                }[m
+[32m+[m[32m            )[m
+[32m+[m[32m            .fillna([m
+[32m+[m[32m                "⚪ Sin estatus"[m
+[32m+[m[32m            )[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        c1, c2, c3, c4 = st.columns([m
+[32m+[m[32m            4[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        entidad_filtro = c1.selectbox([m
+[32m+[m[32m            "Entidad",[m
+[32m+[m[32m            ["Todas"] + sorted([m
+[32m+[m[32m                df_seg["ENTIDAD"][m
+[32m+[m[32m                .dropna()[m
+[32m+[m[32m                .astype(str)[m
+[32m+[m[32m                .unique()[m
+[32m+[m[32m                .tolist()[m
+[32m+[m[32m            )[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        estatus_filtro = c2.selectbox([m
+[32m+[m[32m            "Estatus",[m
+[32m+[m[32m            ["Todos"] + sorted([m
+[32m+[m[32m                df_seg["ESTATUS_INCIDENCIA"][m
+[32m+[m[32m                .dropna()[m
+[32m+[m[32m                .astype(str)[m
+[32m+[m[32m                .unique()[m
+[32m+[m[32m                .tolist()[m
+[32m+[m[32m            )[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        atribuible_filtro = c3.selectbox([m
+[32m+[m[32m            "Atribuible a",[m
+[32m+[m[32m            ["Todos"] + sorted([m
+[32m+[m[32m                df_seg["ATRIBUIBLE A"][m
+[32m+[m[32m                .dropna()[m
+[32m+[m[32m                .astype(str)[m
+[32m+[m[32m                .unique()[m
+[32m+[m[32m                .tolist()[m
+[32m+[m[32m            )[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        buscar_orden = c4.text_input([m
+[32m+[m[32m            "Buscar orden"[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        if entidad_filtro != "Todas":[m
+[32m+[m
+[32m+[m[32m            df_seg = df_seg[[m
+[32m+[m[32m                df_seg["ENTIDAD"].astype(str) == entidad_filtro[m
+[32m+[m[32m            ][m
+[32m+[m
+[32m+[m[32m        if estatus_filtro != "Todos":[m
+[32m+[m
+[32m+[m[32m            df_seg = df_seg[[m
+[32m+[m[32m                df_seg["ESTATUS_INCIDENCIA"].astype(str) == estatus_filtro[m
+[32m+[m[32m            ][m
+[32m+[m
+[32m+[m[32m        if atribuible_filtro != "Todos":[m
+[32m+[m
+[32m+[m[32m            df_seg = df_seg[[m
+[32m+[m[32m                df_seg["ATRIBUIBLE A"].astype(str) == atribuible_filtro[m
+[32m+[m[32m            ][m
+[32m+[m
+[32m+[m[32m        if buscar_orden.strip():[m
+[32m+[m
+[32m+[m[32m            orden_norm = normalizar_orden([m
+[32m+[m[32m                buscar_orden[m
+[32m+[m[32m            )[m
+[32m+[m
+[32m+[m[32m            df_seg = df_seg[[m
+[32m+[m[32m                df_seg["ORDEN"][m
+[32m+[m[32m                .astype(str)[m
+[32m+[m[32m                .apply(normalizar_orden)[m
+[32m+[m[32m                .str.contains([m
+[32m+[m[32m                    orden_norm,[m
+[32m+[m[32m                    na=False,[m
+[32m+[m[32m                    regex=False[m
+[32m+[m[32m                )[m
+[32m+[m[32m            ][m
+[32m+[m
+[32m+[m[32m        st.caption([m
+[32m+[m[32m            f"Registros mostrados: {len(df_seg):,}"[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        columnas_mostrar = [[m
+[32m+[m[32m            "SEMAFORO",[m
+[32m+[m[32m            "FECHA_REGISTRO",[m
+[32m+[m[32m            "ENTIDAD",[m
+[32m+[m[32m            "ORDEN",[m
+[32m+[m[32m            "CLAVE_CNIS",[m
+[32m+[m[32m            "PROVEEDOR",[m
+[32m+[m[32m            "TIPO_INCIDENCIA",[m
+[32m+[m[32m            "ATRIBUIBLE A",[m
+[32m+[m[32m            "ESTATUS_INCIDENCIA",[m
+[32m+[m[32m            "RESPONSABLE",[m
+[32m+[m[32m            "OBSERVACIONES",[m
+[32m+[m[32m            "PDF_CEDULA_RECHAZO",[m
+[32m+[m[32m            "PDF_CORREO_SEGUIMIENTO"[m
+[32m+[m[32m        ][m
+[32m+[m
+[32m+[m[32m        columnas_mostrar = [[m
+[32m+[m[32m            c for c in columnas_mostrar[m
+[32m+[m[32m            if c in df_seg.columns[m
+[32m+[m[32m        ][m
+[32m+[m
+[32m+[m[32m        st.dataframe([m
+[32m+[m[32m            df_seg[columnas_mostrar],[m
+[32m+[m[32m            use_container_width=True[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        excel = convertir_excel([m
+[32m+[m[32m            df_seg[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        st.download_button([m
+[32m+[m[32m            label="⬇️ Descargar incidencias filtradas en Excel",[m
+[32m+[m[32m            data=excel,[m
+[32m+[m[32m            file_name="reporte_incidencias_filtrado.xlsx",[m
+[32m+[m[32m            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",[m
+[32m+[m[32m            use_container_width=True[m
+[32m+[m[32m        )[m
+ [m
+ [m
+ # =========================[m

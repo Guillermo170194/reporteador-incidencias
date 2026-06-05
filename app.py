@@ -467,17 +467,19 @@ for subdirector, lista_monitoras in RESPONSABLES_FIJOS.items():
         )
 
 TIPOS_INCIDENCIA_GENERAL = [
-    "Falta de cita",
-    "Documentación errónea",
-    "Rechazo parcial",
-    "Rechazo total",
-    "Diferencia de piezas",
-    "Producto dañado",
-    "Corta caducidad",
-    "Entrega fuera de horario",
-    "Incumplimiento proveedor",
-    "Incumplimiento operador logístico",
-    "Otro"
+    "CORTA CADUCIDAD",
+    "DOCUMENTACIÓN ERRÓNEA O INCOMPLETA",
+    "ENTREGA DUPLICADA",
+    "ENTREGA EN CLUES DIFERENTE",
+    "ENTREGA FUERA DEL EJERCICIO FISCAL",
+    "FALTA DE CITA",
+    "INSUMO EN MAL ESTADO",
+    "INSUMO INCOMPLETO",
+    "MAL ETIQUETADO",
+    "ORDENES CANCELADAS",
+    "RECHAZO POR CAPACIDAD DEL ALMACÉN",
+    "RECHAZO INJUSTIFICADO",
+    "OTRO. ESPECIFICAR EN OBSERVACIONES"
 ]
 
 
