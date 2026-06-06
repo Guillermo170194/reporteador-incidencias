@@ -73,4 +73,4 @@ df.to_csv(
 print("CSV CPM generado correctamente")
 print("Filas:", len(df))
 print(df.columns.tolist())
-print(df.head())
+print(df.head())	

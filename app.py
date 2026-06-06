@@ -1018,33 +1018,112 @@ def sugerir_ordenes(
 
         return pd.DataFrame()
 
-    respuesta = (
-        supabase
-        .table(
-            "compendio"
-        )
-        .select(
-            "orden_suministro, orden, no_orden, estatus_base, entidad, proveedor, clave_cnis, descripcion"
-        )
-        .ilike(
-            "orden_suministro",
-            f"{valor}%"
-        )
-        .limit(
-            limite
-        )
-        .execute()
+    columnas = (
+        "orden_suministro, orden, no_orden, estatus_base, "
+        "entidad, proveedor, clave_cnis, descripcion"
     )
 
-    datos = respuesta.data
+    consultas = [
+        (
+            "orden_suministro",
+            valor
+        ),
+        (
+            "orden",
+            valor
+        ),
+        (
+            "no_orden",
+            valor
+        )
+    ]
 
-    if not datos:
+    resultados = []
+
+    for columna, texto in consultas:
+
+        try:
+
+            respuesta = (
+                supabase
+                .table(
+                    "compendio"
+                )
+                .select(
+                    columnas
+                )
+                .ilike(
+                    columna,
+                    f"{texto}%"
+                )
+                .limit(
+                    limite
+                )
+                .execute()
+            )
+
+            datos = respuesta.data or []
+
+            if datos:
+
+                resultados.extend(
+                    datos
+                )
+
+        except Exception as e:
+
+            mensaje = str(
+                e
+            )
+
+            if (
+                "57014" in mensaje
+                or "statement timeout" in mensaje.lower()
+                or "canceling statement" in mensaje.lower()
+            ):
+
+                st.warning(
+                    "La búsqueda de sugerencias tardó demasiado en Supabase. "
+                    "Escribe más caracteres de la orden o usa la orden completa."
+                )
+
+                return pd.DataFrame()
+
+            st.warning(
+                f"No se pudieron cargar sugerencias desde Supabase: {e}"
+            )
+
+            return pd.DataFrame()
+
+    if not resultados:
 
         return pd.DataFrame()
 
-    return pd.DataFrame(
-        datos
+    sugerencias = pd.DataFrame(
+        resultados
     )
+
+    columnas_dedup = [
+        c for c in [
+            "orden_suministro",
+            "orden",
+            "no_orden"
+        ]
+        if c in sugerencias.columns
+    ]
+
+    if columnas_dedup:
+
+        sugerencias = sugerencias.drop_duplicates(
+            subset=columnas_dedup,
+            keep="first"
+        )
+
+    return sugerencias.head(
+        limite
+    )
+
+
 # =========================
 # CARGAR DATOS
 # =========================
