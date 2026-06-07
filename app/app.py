@@ -1098,6 +1098,77 @@ def buscar_orden_fuerte(
     return resultado
 
 
+def buscar_orden_compendio_rapida(
+    valor_busqueda
+):
+
+    valor = normalizar_orden(
+        valor_busqueda
+    )
+
+    if (
+        not valor
+        or valor == "NAN"
+    ):
+
+        return pd.DataFrame()
+
+    columnas = (
+        "orden_suministro, orden, no_orden, estatus_base, "
+        "piezas_entregadas_clues"
+    )
+
+    for columna in [
+        "orden_suministro",
+        "orden",
+        "no_orden"
+    ]:
+
+        try:
+
+            respuesta = (
+                supabase
+                .table(
+                    "compendio"
+                )
+                .select(
+                    columnas
+                )
+                .eq(
+                    columna,
+                    valor
+                )
+                .limit(
+                    1
+                )
+                .execute()
+            )
+
+            if respuesta.data:
+
+                return pd.DataFrame(
+                    respuesta.data
+                )
+
+        except Exception as e:
+
+            mensaje = str(
+                e
+            )
+
+            if (
+                "57014" in mensaje
+                or "statement timeout" in mensaje.lower()
+                or "canceling statement" in mensaje.lower()
+            ):
+
+                return pd.DataFrame()
+
+            continue
+
+    return pd.DataFrame()
+
+
 def sugerir_ordenes(
     valor_busqueda,
     limite=10
@@ -3102,7 +3173,7 @@ def actualizar_estatus_seguimiento_con_compendio(limite=10000):
 
         try:
 
-            compendio = buscar_orden_fuerte(
+            compendio = buscar_orden_compendio_rapida(
                 orden
             )
 
@@ -3292,78 +3363,6 @@ st.sidebar.success(
 )
 st.sidebar.divider()
 
-if st.sidebar.button(
-    "🧪 Probar conexión Drive",
-    use_container_width=True
-):
-
-    try:
-
-        carpeta_prueba_id = obtener_o_crear_carpeta_drive(
-            "PRUEBA_RENDER_DRIVE",
-            FOLDER_ID_INCIDENCIAS_DRIVE
-        )
-
-        ruta_prueba = os.path.join(
-            TEMP_DIR,
-            "prueba_render_drive.txt"
-        )
-
-        with open(
-            ruta_prueba,
-            "w",
-            encoding="utf-8"
-        ) as f:
-
-            f.write(
-                "Prueba correcta desde Render"
-            )
-
-        media = MediaFileUpload(
-            ruta_prueba,
-            mimetype="text/plain",
-            resumable=True
-        )
-
-        metadata = {
-            "name": "prueba_render_drive.txt",
-            "parents": [
-                carpeta_prueba_id
-            ]
-        }
-
-        archivo = (
-            drive_service.files()
-            .create(
-                body=metadata,
-                media_body=media,
-                fields="id, webViewLink",
-                supportsAllDrives=True
-            )
-            .execute()
-        )
-
-        st.sidebar.success(
-            "Drive funciona correctamente."
-        )
-
-        st.sidebar.write(
-            archivo.get(
-                "webViewLink",
-                ""
-            )
-        )
-
-    except Exception as e:
-
-        st.sidebar.error(
-            f"Error Drive: {e}"
-        )
-
-        st.sidebar.exception(
-            e
-        )
-
 
 # =========================
 # MENÚ
@@ -3385,6 +3384,46 @@ menu = st.sidebar.radio(
 # =========================
 
 incidencias = cargar_incidencias()
+
+if menu == "Seguimiento":
+
+    if "seguimiento_auto_actualizado" not in st.session_state:
+
+        with st.spinner(
+            "Actualizando seguimiento con compendio..."
+        ):
+
+            resultado_auto = actualizar_estatus_seguimiento_con_compendio(
+                limite=10000
+            )
+
+        st.session_state[
+            "seguimiento_auto_actualizado"
+        ] = True
+
+        st.success(
+            f"Seguimiento actualizado automáticamente: {resultado_auto.get('actualizadas', 0)} registros."
+        )
+
+        if resultado_auto.get(
+            "errores",
+            []
+        ):
+
+            with st.expander(
+                "Ver errores de actualización"
+            ):
+
+                st.write(
+                    resultado_auto.get(
+                        "errores",
+                        []
+                    )
+                )
+
+        st.cache_data.clear()
+
+        incidencias = cargar_incidencias()
 
 st.sidebar.markdown("---")
 
