@@ -1343,55 +1343,77 @@ def cargar_incidencias():
     try:
 
         datos = []
+
         bloque = 900
-        inicio = 0
 
-        while True:
-
-            respuesta = (
-                supabase
-                .table(
-                    "incidencias"
-                )
-                .select(
-                    "*",
-                    count="exact"
-                )
-                .order(
-                    "id",
-                    desc=True
-                )
-                .range(
-                    inicio,
-                    inicio + bloque - 1
-                )
-                .execute()
+        # Primero preguntamos cuántas filas existen realmente.
+        # Así evitamos pedir rangos fuera de la tabla y evitamos el error PGRST103.
+        respuesta_total = (
+            supabase
+            .table(
+                "incidencias"
             )
-
-            parte = respuesta.data or []
-
-            if not parte:
-
-                break
-
-            datos.extend(
-                parte
+            .select(
+                "id",
+                count="exact"
             )
+            .limit(
+                1
+            )
+            .execute()
+        )
 
-            total_esperado = getattr(
-                respuesta,
+        total_conocido = int(
+            getattr(
+                respuesta_total,
                 "count",
-                None
-            )
+                0
+            ) or 0
+        )
 
-            inicio += bloque
+        if total_conocido == 0:
 
-            if (
-                total_esperado is not None
-                and len(datos) >= total_esperado
+            datos = []
+
+        else:
+
+            for inicio in range(
+                0,
+                total_conocido,
+                bloque
             ):
 
-                break
+                fin = min(
+                    inicio + bloque - 1,
+                    total_conocido - 1
+                )
+
+                respuesta = (
+                    supabase
+                    .table(
+                        "incidencias"
+                    )
+                    .select(
+                        "*"
+                    )
+                    .order(
+                        "id",
+                        desc=True
+                    )
+                    .range(
+                        inicio,
+                        fin
+                    )
+                    .execute()
+                )
+
+                parte = respuesta.data or []
+
+                if parte:
+
+                    datos.extend(
+                        parte
+                    )
 
     except Exception as e:
 
