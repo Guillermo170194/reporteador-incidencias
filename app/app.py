@@ -5310,6 +5310,11 @@ elif menu == "Seguimiento":
         "📋 Seguimiento de incidencias"
     )
 
+    st.caption(
+        "El cruce con compendio se actualiza automáticamente solo una vez al día. "
+        "Las incidencias nuevas se cruzan al momento de guardarse."
+    )
+
     df_seg = incidencias.copy()
 
     if df_seg.empty:
@@ -5327,39 +5332,6 @@ elif menu == "Seguimiento":
         df_seg["SEMAFORO"] = df_seg["ESTATUS_SEGUIMIENTO"].apply(
             semaforo_seguimiento
         )
-
-        if st.button(
-            "🔄 Actualizar estatus con compendio",
-            use_container_width=True
-        ):
-
-            with st.spinner(
-                "Actualizando estatus de seguimiento desde compendio..."
-            ):
-
-                resultado_actualizacion = actualizar_estatus_seguimiento_con_compendio()
-
-            st.success(
-                f"Estatus actualizados: {resultado_actualizacion['actualizadas']}"
-            )
-
-            if resultado_actualizacion["sin_compendio"] > 0:
-
-                st.warning(
-                    f"Órdenes sin coincidencia en compendio: {resultado_actualizacion['sin_compendio']}"
-                )
-
-            if resultado_actualizacion["errores"]:
-
-                st.error(
-                    "Algunas órdenes tuvieron error. Revisa el detalle."
-                )
-
-                st.write(
-                    resultado_actualizacion["errores"]
-                )
-
-            st.rerun()
 
         c1, c2, c3, c4 = st.columns(
             4
