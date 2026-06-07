@@ -1342,25 +1342,42 @@ def cargar_incidencias():
 
     try:
 
-        respuesta = (
-            supabase
-            .table(
-                "incidencias"
-            )
-            .select(
-                "*"
-            )
-            .order(
-                "id",
-                desc=True
-            )
-            .limit(
-                10000
-            )
-            .execute()
-        )
+        datos = []
+        bloque = 1000
+        inicio = 0
 
-        datos = respuesta.data
+        while True:
+
+            respuesta = (
+                supabase
+                .table(
+                    "incidencias"
+                )
+                .select(
+                    "*"
+                )
+                .order(
+                    "id",
+                    desc=True
+                )
+                .range(
+                    inicio,
+                    inicio + bloque - 1
+                )
+                .execute()
+            )
+
+            parte = respuesta.data or []
+
+            datos.extend(
+                parte
+            )
+
+            if len(parte) < bloque:
+
+                break
+
+            inicio += bloque
 
     except Exception as e:
 
