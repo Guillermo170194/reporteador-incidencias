@@ -13,6 +13,7 @@ load_dotenv()
 
 from io import BytesIO
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from supabase import create_client
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -3238,6 +3239,148 @@ def actualizar_estatus_seguimiento_con_compendio(limite=10000):
     }
 
 
+
+def fecha_hoy_sistema():
+
+    try:
+
+        return datetime.now(
+            ZoneInfo(
+                "America/Mexico_City"
+            )
+        ).strftime(
+            "%Y-%m-%d"
+        )
+
+    except Exception:
+
+        return datetime.now().strftime(
+            "%Y-%m-%d"
+        )
+
+
+def obtener_control_sistema(
+    clave
+):
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "control_sistema"
+            )
+            .select(
+                "clave, valor, actualizado_en"
+            )
+            .eq(
+                "clave",
+                clave
+            )
+            .limit(
+                1
+            )
+            .execute()
+        )
+
+        if respuesta.data:
+
+            return respuesta.data[0]
+
+    except Exception as e:
+
+        st.warning(
+            f"No se pudo leer control_sistema: {e}"
+        )
+
+    return None
+
+
+def guardar_control_sistema(
+    clave,
+    valor
+):
+
+    try:
+
+        supabase.table(
+            "control_sistema"
+        ).upsert(
+            {
+                "clave": clave,
+                "valor": valor,
+                "actualizado_en": datetime.now().isoformat()
+            }
+        ).execute()
+
+        return True
+
+    except Exception as e:
+
+        st.warning(
+            f"No se pudo guardar control_sistema: {e}"
+        )
+
+        return False
+
+
+def seguimiento_actualizado_hoy():
+
+    control = obtener_control_sistema(
+        "ultima_actualizacion_seguimiento"
+    )
+
+    if not control:
+
+        return False
+
+    return str(
+        control.get(
+            "valor",
+            ""
+        )
+    ).strip() == fecha_hoy_sistema()
+
+
+def actualizar_seguimiento_diario_si_corresponde(
+    limite=10000,
+    forzar=False
+):
+
+    hoy = fecha_hoy_sistema()
+
+    if (
+        not forzar
+        and seguimiento_actualizado_hoy()
+    ):
+
+        return {
+            "ejecutado": False,
+            "actualizadas": 0,
+            "sin_compendio": 0,
+            "errores": [],
+            "mensaje": "El seguimiento completo ya fue actualizado hoy."
+        }
+
+    resultado = actualizar_estatus_seguimiento_con_compendio(
+        limite=limite
+    )
+
+    guardar_control_sistema(
+        "ultima_actualizacion_seguimiento",
+        hoy
+    )
+
+    resultado[
+        "ejecutado"
+    ] = True
+
+    resultado[
+        "mensaje"
+    ] = "Seguimiento completo actualizado."
+
+    return resultado
+
 def semaforo_seguimiento(valor):
 
     texto = str(
@@ -3387,19 +3530,19 @@ incidencias = cargar_incidencias()
 
 if menu == "Seguimiento":
 
-    if "seguimiento_auto_actualizado" not in st.session_state:
+    with st.spinner(
+        "Revisando actualización diaria de seguimiento..."
+    ):
 
-        with st.spinner(
-            "Actualizando seguimiento con compendio..."
-        ):
+        resultado_auto = actualizar_seguimiento_diario_si_corresponde(
+            limite=10000,
+            forzar=False
+        )
 
-            resultado_auto = actualizar_estatus_seguimiento_con_compendio(
-                limite=10000
-            )
-
-        st.session_state[
-            "seguimiento_auto_actualizado"
-        ] = True
+    if resultado_auto.get(
+        "ejecutado",
+        False
+    ):
 
         st.success(
             f"Seguimiento actualizado automáticamente: {resultado_auto.get('actualizadas', 0)} registros."
@@ -3424,6 +3567,12 @@ if menu == "Seguimiento":
         st.cache_data.clear()
 
         incidencias = cargar_incidencias()
+
+    else:
+
+        st.info(
+            "El seguimiento completo ya fue actualizado hoy. Las nuevas incidencias se cruzan al guardarse."
+        )
 
 st.sidebar.markdown("---")
 
