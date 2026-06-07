@@ -1,0 +1,6 @@
+﻿.env
+credenciales_google.json
+app/.env
+app/credenciales_google.json
+__pycache__/
+*.pyc
