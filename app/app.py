@@ -2500,66 +2500,90 @@ def subir_pdf_evidencia_drive(
 
         return ""
 
-    carpeta_destino_id = obtener_carpeta_evidencia(
-        estado,
-        clues
-    )
+    try:
 
-    fecha = datetime.now().strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
-    nombre_orden = limpiar_nombre_archivo(
-        orden
-    )
-
-    nombre_archivo = (
-        f"{fecha}_{nombre_orden}_{tipo_pdf}.pdf"
-    )
-
-    ruta_local = os.path.join(
-        TEMP_DIR,
-        nombre_archivo
-    )
-
-    with open(
-        ruta_local,
-        "wb"
-    ) as f:
-
-        f.write(
-            archivo.getbuffer()
+        carpeta_destino_id = obtener_carpeta_evidencia(
+            estado,
+            clues
         )
 
-    metadata = {
-        "name": nombre_archivo,
-        "parents": [
-            carpeta_destino_id
-        ]
-    }
-
-    media = MediaFileUpload(
-        ruta_local,
-        mimetype="application/pdf",
-        resumable=True
-    )
-
-    nuevo = (
-        drive_service.files()
-        .create(
-            body=metadata,
-            media_body=media,
-            fields="id, webViewLink",
-            supportsAllDrives=True
+        fecha = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
         )
-        .execute()
-    )
 
-    return nuevo.get(
-        "webViewLink",
-        ""
-    )
+        nombre_orden = limpiar_nombre_archivo(
+            orden
+        )
 
+        nombre_archivo = (
+            f"{fecha}_{nombre_orden}_{tipo_pdf}.pdf"
+        )
+
+        ruta_local = os.path.join(
+            TEMP_DIR,
+            nombre_archivo
+        )
+
+        with open(
+            ruta_local,
+            "wb"
+        ) as f:
+
+            f.write(
+                archivo.getbuffer()
+            )
+
+        metadata = {
+            "name": nombre_archivo,
+            "parents": [
+                carpeta_destino_id
+            ]
+        }
+
+        media = MediaFileUpload(
+            ruta_local,
+            mimetype="application/pdf",
+            resumable=True
+        )
+
+        nuevo = (
+            drive_service.files()
+            .create(
+                body=metadata,
+                media_body=media,
+                fields="id, webViewLink",
+                supportsAllDrives=True
+            )
+            .execute()
+        )
+
+        link = nuevo.get(
+            "webViewLink",
+            ""
+        )
+
+        st.success(
+            f"Evidencia subida correctamente: {tipo_pdf}"
+        )
+
+        st.write(
+            "Link Drive:",
+            link
+        )
+
+        return link
+
+    except Exception as e:
+
+        st.error(
+            f"No se pudo subir la evidencia a Drive ({tipo_pdf}): {e}"
+        )
+
+        st.exception(
+            e
+        )
+
+        return ""
 
 def convertir_excel(
     df
