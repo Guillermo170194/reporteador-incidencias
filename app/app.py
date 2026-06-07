@@ -3290,6 +3290,79 @@ st.sidebar.title(
 st.sidebar.success(
     "Base principal conectada a Supabase."
 )
+st.sidebar.divider()
+
+if st.sidebar.button(
+    "🧪 Probar conexión Drive",
+    use_container_width=True
+):
+
+    try:
+
+        carpeta_prueba_id = obtener_o_crear_carpeta_drive(
+            "PRUEBA_RENDER_DRIVE",
+            FOLDER_ID_INCIDENCIAS_DRIVE
+        )
+
+        ruta_prueba = os.path.join(
+            TEMP_DIR,
+            "prueba_render_drive.txt"
+        )
+
+        with open(
+            ruta_prueba,
+            "w",
+            encoding="utf-8"
+        ) as f:
+
+            f.write(
+                "Prueba correcta desde Render"
+            )
+
+        media = MediaFileUpload(
+            ruta_prueba,
+            mimetype="text/plain",
+            resumable=True
+        )
+
+        metadata = {
+            "name": "prueba_render_drive.txt",
+            "parents": [
+                carpeta_prueba_id
+            ]
+        }
+
+        archivo = (
+            drive_service.files()
+            .create(
+                body=metadata,
+                media_body=media,
+                fields="id, webViewLink",
+                supportsAllDrives=True
+            )
+            .execute()
+        )
+
+        st.sidebar.success(
+            "Drive funciona correctamente."
+        )
+
+        st.sidebar.write(
+            archivo.get(
+                "webViewLink",
+                ""
+            )
+        )
+
+    except Exception as e:
+
+        st.sidebar.error(
+            f"Error Drive: {e}"
+        )
+
+        st.sidebar.exception(
+            e
+        )
 
 
 # =========================
