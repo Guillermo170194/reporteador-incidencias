@@ -1,0 +1,14 @@
+
+streamlit
+pandas
+numpy
+altair
+openpyxl
+pyxlsb
+pyarrow
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+duckdb
+supabase==1.2.0

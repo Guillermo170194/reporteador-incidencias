@@ -61,6 +61,10 @@ NOMBRE_CARPETA_RESPALDOS = (
     "RESPALDOS_EXCEL"
 )
 
+NOMBRE_GOOGLE_SHEET_INCIDENCIAS = (
+    "BASE_INCIDENCIAS_SUPABASE"
+)
+
 
 # =========================
 # ARCHIVOS DRIVE
@@ -97,12 +101,44 @@ RUTA_AGENDA = os.path.join(
 # =========================
 
 SCOPES = [
-    "https://www.googleapis.com/auth/drive"
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets"
 ]
 
 
 @st.cache_resource
-def obtener_drive_service():
+def obtener_google_credentials():
+
+    credenciales_env = os.getenv(
+        "GOOGLE_CREDENTIALS",
+        ""
+    )
+
+    if credenciales_env:
+
+        try:
+
+            credenciales = json.loads(
+                credenciales_env
+            )
+
+            credentials = (
+                service_account.Credentials
+                .from_service_account_info(
+                    credenciales,
+                    scopes=SCOPES
+                )
+            )
+
+            return credentials
+
+        except Exception as e:
+
+            st.error(
+                f"GOOGLE_CREDENTIALS existe, pero no es un JSON válido: {e}"
+            )
+
+            st.stop()
 
     ruta_json = os.getenv(
         "GOOGLE_CREDENTIALS_FILE",
@@ -121,9 +157,8 @@ def obtener_drive_service():
     ):
 
         st.error(
-            "No encontré el archivo de credenciales de Google Drive. "
-            "Guarda el archivo como credenciales_google.json en la misma carpeta que app.py, "
-            "o define GOOGLE_CREDENTIALS_FILE en el archivo .env."
+            "No encontré credenciales de Google. En Render define GOOGLE_CREDENTIALS "
+            "como variable de entorno. En local usa credenciales_google.json o GOOGLE_CREDENTIALS_FILE."
         )
 
         st.stop()
@@ -136,6 +171,14 @@ def obtener_drive_service():
         )
     )
 
+    return credentials
+
+
+@st.cache_resource
+def obtener_drive_service():
+
+    credentials = obtener_google_credentials()
+
     service = build(
         "drive",
         "v3",
@@ -145,7 +188,22 @@ def obtener_drive_service():
     return service
 
 
+@st.cache_resource
+def obtener_sheets_service():
+
+    credentials = obtener_google_credentials()
+
+    service = build(
+        "sheets",
+        "v4",
+        credentials=credentials
+    )
+
+    return service
+
+
 drive_service = obtener_drive_service()
+sheets_service = obtener_sheets_service()
 
 
 # =========================
@@ -1199,6 +1257,7 @@ def cargar_incidencias():
         "ESTATUS_RECEPCION_OL": "",
         "ESTATUS_ENTREGA_ESTADO": "",
         "ESTATUS_INCIDENCIA_COMPLETA": "INCOMPLETA",
+        "ESTATUS_SEGUIMIENTO": "",
         "TIPO_INCIDENCIA": "",
         "ATRIBUIBLE A": "",
         "ESTATUS_INCIDENCIA": "En proceso",
@@ -1277,6 +1336,7 @@ def cargar_incidencias():
         "estatus_recepcion_ol": "ESTATUS_RECEPCION_OL",
         "estatus_entrega_estado": "ESTATUS_ENTREGA_ESTADO",
         "estatus_incidencia_completa": "ESTATUS_INCIDENCIA_COMPLETA",
+        "estatus_seguimiento": "ESTATUS_SEGUIMIENTO",
         "tipo_incidencia": "TIPO_INCIDENCIA",
         "atribuible_a": "ATRIBUIBLE A",
         "estatus_incidencia": "ESTATUS_INCIDENCIA",
@@ -2276,6 +2336,7 @@ def guardar_incidencia(
         "estatus_recepcion_ol": preparar_valor_supabase(nueva.get("ESTATUS_RECEPCION_OL", "")),
         "estatus_entrega_estado": preparar_valor_supabase(nueva.get("ESTATUS_ENTREGA_ESTADO", "")),
         "estatus_incidencia_completa": preparar_valor_supabase(nueva.get("ESTATUS_INCIDENCIA_COMPLETA", "")),
+        "estatus_seguimiento": preparar_valor_supabase(nueva.get("ESTATUS_SEGUIMIENTO", "")),
         "tipo_incidencia": preparar_valor_supabase(nueva.get("TIPO_INCIDENCIA", "")),
         "atribuible_a": preparar_valor_supabase(nueva.get("ATRIBUIBLE A", "")),
         "estatus_incidencia": preparar_valor_supabase(nueva.get("ESTATUS_INCIDENCIA", "")),
@@ -2525,66 +2586,171 @@ def convertir_excel(
 
 
 
+def buscar_google_sheet_maestro():
+
+    query = (
+        f"name = '{NOMBRE_GOOGLE_SHEET_INCIDENCIAS}' "
+        f"and mimeType = 'application/vnd.google-apps.spreadsheet' "
+        f"and '{FOLDER_ID_INCIDENCIAS_DRIVE}' in parents "
+        f"and trashed = false"
+    )
+
+    resultado = (
+        drive_service.files()
+        .list(
+            q=query,
+            fields="files(id, name, webViewLink)",
+            corpora="allDrives",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        )
+        .execute()
+    )
+
+    archivos = resultado.get(
+        "files",
+        []
+    )
+
+    if archivos:
+
+        return archivos[0]
+
+    return None
+
+
+def crear_google_sheet_maestro():
+
+    metadata = {
+        "name": NOMBRE_GOOGLE_SHEET_INCIDENCIAS,
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+        "parents": [
+            FOLDER_ID_INCIDENCIAS_DRIVE
+        ]
+    }
+
+    archivo = (
+        drive_service.files()
+        .create(
+            body=metadata,
+            fields="id, name, webViewLink",
+            supportsAllDrives=True
+        )
+        .execute()
+    )
+
+    return archivo
+
+
+def obtener_o_crear_google_sheet_maestro():
+
+    archivo = buscar_google_sheet_maestro()
+
+    if archivo:
+
+        return archivo
+
+    return crear_google_sheet_maestro()
+
+
+def preparar_dataframe_para_sheets(df):
+
+    if df is None or df.empty:
+
+        return [
+            ["SIN_DATOS"]
+        ]
+
+    limpio = df.copy()
+
+    limpio = limpiar_df_visual(
+        limpio
+    )
+
+    for columna in limpio.columns:
+
+        limpio[columna] = limpio[columna].apply(
+            lambda x: fecha_a_texto(x)
+            if isinstance(x, (pd.Timestamp, datetime))
+            else limpiar_valor_visual(x)
+        )
+
+    valores = [
+        limpio.columns.astype(str).tolist()
+    ]
+
+    valores.extend(
+        limpio.astype(str).values.tolist()
+    )
+
+    return valores
+
+
+def actualizar_google_sheets_maestro():
+
+    archivo = obtener_o_crear_google_sheet_maestro()
+
+    spreadsheet_id = archivo["id"]
+
+    incidencias_sheet = cargar_incidencias()
+
+    valores = preparar_dataframe_para_sheets(
+        incidencias_sheet
+    )
+
+    sheets_service.spreadsheets().values().clear(
+        spreadsheetId=spreadsheet_id,
+        range="Incidencias!A:ZZ"
+    ).execute()
+
+    try:
+
+        sheets_service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": 0,
+                                "title": "Incidencias"
+                            },
+                            "fields": "title"
+                        }
+                    }
+                ]
+            }
+        ).execute()
+
+    except Exception:
+
+        pass
+
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range="Incidencias!A1",
+        valueInputOption="RAW",
+        body={
+            "values": valores
+        }
+    ).execute()
+
+    return archivo.get(
+        "webViewLink",
+        f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+    )
+
+
 def generar_respaldo_drive():
 
     try:
 
-        incidencias_respaldo = cargar_incidencias()
-
-        fecha = datetime.now().strftime(
-            "%Y%m%d_%H%M%S"
-        )
-
-        nombre_archivo = (
-            f"respaldo_incidencias_{fecha}.xlsx"
-        )
-
-        ruta_local = os.path.join(
-            TEMP_DIR,
-            nombre_archivo
-        )
-
-        incidencias_respaldo.to_excel(
-            ruta_local,
-            index=False,
-            engine="openpyxl"
-        )
-
-        carpeta_respaldos_id = obtener_carpeta_respaldos_raiz()
-
-        media = MediaFileUpload(
-            ruta_local,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            resumable=True
-        )
-
-        metadata = {
-            "name": nombre_archivo,
-            "parents": [
-                carpeta_respaldos_id
-            ]
-        }
-
-        respaldo = (
-            drive_service.files()
-            .create(
-                body=metadata,
-                media_body=media,
-                fields="id, webViewLink",
-                supportsAllDrives=True
-            )
-            .execute()
-        )
-
-        return respaldo.get(
-            "webViewLink",
-            ""
-        )
+        return actualizar_google_sheets_maestro()
 
     except Exception as e:
 
         st.warning(
-            f"La incidencia se guardó, pero no se pudo generar el respaldo en Drive: {e}"
+            f"La incidencia se guardó, pero no se pudo actualizar el Google Sheets maestro: {e}"
         )
 
         return ""
@@ -2806,6 +2972,198 @@ def obtener_datos_orden_para_registro(
     return datos, resultado
 
 
+def calcular_estatus_seguimiento_desde_datos(datos):
+
+    estatus_base = str(
+        datos.get(
+            "estatus_base",
+            ""
+        )
+    ).upper().strip()
+
+    piezas_entregadas = convertir_numero(
+        datos.get(
+            "piezas_entregadas",
+            0
+        )
+    )
+
+    if piezas_entregadas > 0:
+
+        return "Completo-Entregado"
+
+    if estatus_base in [
+        "INACTIVA",
+        "CANCELADA",
+        "CANCELADO",
+        "INACTIVO"
+    ]:
+
+        return "Incompleta-Cancelada"
+
+    return "Incompleta-sin Entregar"
+
+
+def calcular_estatus_seguimiento_desde_compendio(fila_compendio):
+
+    estatus_base = str(
+        fila_compendio.get(
+            "estatus_base",
+            ""
+        )
+    ).upper().strip()
+
+    piezas_entregadas = convertir_numero(
+        fila_compendio.get(
+            "piezas_entregadas_clues",
+            0
+        )
+    )
+
+    if piezas_entregadas > 0:
+
+        return "Completo-Entregado"
+
+    if estatus_base in [
+        "INACTIVA",
+        "CANCELADA",
+        "CANCELADO",
+        "INACTIVO"
+    ]:
+
+        return "Incompleta-Cancelada"
+
+    return "Incompleta-sin Entregar"
+
+
+def actualizar_estatus_seguimiento_con_compendio(limite=10000):
+
+    incidencias_actuales = cargar_incidencias()
+
+    if incidencias_actuales.empty:
+
+        return {
+            "actualizadas": 0,
+            "sin_compendio": 0,
+            "errores": []
+        }
+
+    actualizadas = 0
+    sin_compendio = 0
+    errores = []
+
+    for _, fila in incidencias_actuales.iterrows():
+
+        if actualizadas >= limite:
+
+            break
+
+        incidencia_id = fila.get(
+            "ID",
+            ""
+        )
+
+        orden = obtener_valor(
+            fila,
+            [
+                "orden_suministro",
+                "ORDEN",
+                "ORDEN_BUSCADA"
+            ]
+        )
+
+        if not incidencia_id or not orden:
+
+            continue
+
+        try:
+
+            compendio = buscar_orden_fuerte(
+                orden
+            )
+
+            if compendio.empty:
+
+                sin_compendio += 1
+                continue
+
+            fila_compendio = compendio.iloc[0]
+
+            estatus_nuevo = calcular_estatus_seguimiento_desde_compendio(
+                fila_compendio
+            )
+
+            supabase.table(
+                "incidencias"
+            ).update(
+                {
+                    "estatus_seguimiento": estatus_nuevo,
+                    "estatus_base": preparar_valor_supabase(
+                        fila_compendio.get(
+                            "estatus_base",
+                            ""
+                        )
+                    ),
+                    "piezas_entregadas_clues": preparar_valor_supabase(
+                        fila_compendio.get(
+                            "piezas_entregadas_clues",
+                            ""
+                        )
+                    )
+                }
+            ).eq(
+                "id",
+                incidencia_id
+            ).execute()
+
+            actualizadas += 1
+
+        except Exception as e:
+
+            errores.append(
+                f"{orden}: {e}"
+            )
+
+    st.cache_data.clear()
+
+    try:
+
+        actualizar_google_sheets_maestro()
+
+    except Exception as e:
+
+        errores.append(
+            f"Google Sheets: {e}"
+        )
+
+    return {
+        "actualizadas": actualizadas,
+        "sin_compendio": sin_compendio,
+        "errores": errores
+    }
+
+
+def semaforo_seguimiento(valor):
+
+    texto = str(
+        valor
+    ).upper().strip()
+
+    if texto == "COMPLETO-ENTREGADO":
+
+        return "🟢 Completo-Entregado"
+
+    if texto == "INCOMPLETA-SIN ENTREGAR":
+
+        return "🟡 Incompleta-sin Entregar"
+
+    if texto == "INCOMPLETA-CANCELADA":
+
+        return "🔴 Incompleta-Cancelada"
+
+    return "⚪ Sin estatus"
+
+
 def construir_registro_incidencia(
     valor_busqueda,
     datos,
@@ -2844,6 +3202,7 @@ def construir_registro_incidencia(
         "ESTATUS_RECEPCION_OL": datos["estatus_recepcion_ol"],
         "ESTATUS_ENTREGA_ESTADO": datos["estatus_entrega_estado"],
         "ESTATUS_INCIDENCIA_COMPLETA": datos["estatus_completa"],
+        "ESTATUS_SEGUIMIENTO": calcular_estatus_seguimiento_desde_datos(datos),
         "ATRIBUIBLE A": atribuible,
         "TIPO_INCIDENCIA": tipo,
         "ESTATUS_INCIDENCIA": estatus,
@@ -3751,7 +4110,7 @@ if menu == "Registrar incidencia":
                         if link_respaldo:
 
                             st.success(
-                                "Incidencia guardada correctamente. Evidencias y respaldo enviados a Drive."
+                                "Incidencia guardada correctamente. Evidencias en Drive y Google Sheets actualizado."
                             )
 
                         else:
@@ -4022,7 +4381,7 @@ if menu == "Registrar incidencia":
                 if link_respaldo:
 
                     st.success(
-                        f"Guardadas correctamente: {guardadas}. Respaldo generado en Drive."
+                        f"Guardadas correctamente: {guardadas}. Google Sheets actualizado."
                     )
 
                 else:
@@ -4072,25 +4431,46 @@ elif menu == "Seguimiento":
 
     else:
 
-        df_seg["SEMAFORO"] = (
-            df_seg["ESTATUS_INCIDENCIA"]
-            .astype(str)
-            .str.upper()
-            .map(
-                {
-                    "RESUELTA": "🟢 Resuelto",
-                    "RESUELTO": "🟢 Resuelto",
-                    "EN PROCESO": "🟠 En proceso",
-                    "RECHAZADO": "🔴 Rechazado",
-                    "PENDIENTE": "🟡 Pendiente",
-                    "ESCALADO": "🔴 Escalado",
-                    "CANCELADA": "⚫ Cancelada"
-                }
-            )
-            .fillna(
-                "⚪ Sin estatus"
-            )
+        if "ESTATUS_SEGUIMIENTO" not in df_seg.columns:
+
+            df_seg["ESTATUS_SEGUIMIENTO"] = ""
+
+        df_seg["SEMAFORO"] = df_seg["ESTATUS_SEGUIMIENTO"].apply(
+            semaforo_seguimiento
         )
+
+        if st.button(
+            "🔄 Actualizar estatus con compendio",
+            use_container_width=True
+        ):
+
+            with st.spinner(
+                "Actualizando estatus de seguimiento desde compendio..."
+            ):
+
+                resultado_actualizacion = actualizar_estatus_seguimiento_con_compendio()
+
+            st.success(
+                f"Estatus actualizados: {resultado_actualizacion['actualizadas']}"
+            )
+
+            if resultado_actualizacion["sin_compendio"] > 0:
+
+                st.warning(
+                    f"Órdenes sin coincidencia en compendio: {resultado_actualizacion['sin_compendio']}"
+                )
+
+            if resultado_actualizacion["errores"]:
+
+                st.error(
+                    "Algunas órdenes tuvieron error. Revisa el detalle."
+                )
+
+                st.write(
+                    resultado_actualizacion["errores"]
+                )
+
+            st.rerun()
 
         c1, c2, c3, c4 = st.columns(
             4
@@ -4108,9 +4488,9 @@ elif menu == "Seguimiento":
         )
 
         estatus_filtro = c2.selectbox(
-            "Estatus",
+            "Estatus seguimiento",
             ["Todos"] + sorted(
-                df_seg["ESTATUS_INCIDENCIA"]
+                df_seg["ESTATUS_SEGUIMIENTO"]
                 .dropna()
                 .astype(str)
                 .unique()
@@ -4142,7 +4522,7 @@ elif menu == "Seguimiento":
         if estatus_filtro != "Todos":
 
             df_seg = df_seg[
-                df_seg["ESTATUS_INCIDENCIA"].astype(str) == estatus_filtro
+                df_seg["ESTATUS_SEGUIMIENTO"].astype(str) == estatus_filtro
             ]
 
         if atribuible_filtro != "Todos":
@@ -4181,6 +4561,7 @@ elif menu == "Seguimiento":
             "PROVEEDOR",
             "TIPO_INCIDENCIA",
             "ATRIBUIBLE A",
+            "ESTATUS_SEGUIMIENTO",
             "ESTATUS_INCIDENCIA",
             "RESPONSABLE",
             "OBSERVACIONES",
