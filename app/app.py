@@ -2429,6 +2429,10 @@ def guardar_incidencia(
         .execute()
     )
 
+    # Limpia el cache inmediatamente después de guardar para que
+    # Resumen Ejecutivo, Seguimiento y Google Sheets lean datos nuevos.
+    st.cache_data.clear()
+
 
 # =========================
 # EVIDENCIAS DRIVE
@@ -4894,6 +4898,8 @@ if menu == "Registrar incidencia":
                         guardar_incidencia(
                             nueva
                         )
+
+                        st.cache_data.clear()
 
                         link_respaldo = generar_respaldo_drive()
 
