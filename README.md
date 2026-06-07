@@ -1,2 +1,0 @@
-# reporteador-incidencias
-Incidencias
