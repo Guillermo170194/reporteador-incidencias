@@ -3515,7 +3515,7 @@ menu = st.sidebar.radio(
     "Menú",
     [
         "Registrar incidencia",
-        "Dashboard",
+        "Resumen Ejecutivo",
         "Seguimiento",
         "Base Supabase"
     ]
@@ -3598,23 +3598,18 @@ st.sidebar.caption(
 
 
 # =========================
-# DASHBOARD
+# RESUMEN EJECUTIVO
 # =========================
 
-if menu == "Dashboard":
+if menu == "Resumen Ejecutivo":
 
     st.subheader(
-        "📊 Dashboard ejecutivo"
+        "📊 Resumen Ejecutivo"
     )
 
-    resumen = cargar_resumen_incidencias()
+    df_resumen = incidencias.copy()
 
-    total = resumen.get(
-        "total",
-        0
-    )
-
-    if total == 0:
+    if df_resumen.empty:
 
         st.info(
             "Aún no hay incidencias registradas."
@@ -3622,86 +3617,596 @@ if menu == "Dashboard":
 
     else:
 
-        c1, c2, c3, c4 = st.columns(
-            4
+        if "ESTATUS_SEGUIMIENTO" not in df_resumen.columns:
+
+            df_resumen["ESTATUS_SEGUIMIENTO"] = ""
+
+        df_resumen["ESTATUS_SEGUIMIENTO"] = (
+            df_resumen["ESTATUS_SEGUIMIENTO"]
+            .astype(str)
+            .str.strip()
+            .replace(
+                {
+                    "": "Sin estatus",
+                    "nan": "Sin estatus",
+                    "None": "Sin estatus"
+                }
+            )
+        )
+
+        if "SEMAFORO" not in df_resumen.columns:
+
+            df_resumen["SEMAFORO"] = df_resumen[
+                "ESTATUS_SEGUIMIENTO"
+            ].apply(
+                semaforo_seguimiento
+            )
+
+        total = len(
+            df_resumen
+        )
+
+        completo_entregado = df_resumen[
+            df_resumen["ESTATUS_SEGUIMIENTO"]
+            .astype(str)
+            .str.upper()
+            .eq("COMPLETO-ENTREGADO")
+        ].shape[0]
+
+        incompleta_sin_entregar = df_resumen[
+            df_resumen["ESTATUS_SEGUIMIENTO"]
+            .astype(str)
+            .str.upper()
+            .eq("INCOMPLETA-SIN ENTREGAR")
+        ].shape[0]
+
+        incompleta_cancelada = df_resumen[
+            df_resumen["ESTATUS_SEGUIMIENTO"]
+            .astype(str)
+            .str.upper()
+            .eq("INCOMPLETA-CANCELADA")
+        ].shape[0]
+
+        sin_estatus = df_resumen[
+            df_resumen["ESTATUS_SEGUIMIENTO"]
+            .astype(str)
+            .str.upper()
+            .isin(
+                [
+                    "",
+                    "SIN ESTATUS",
+                    "NAN",
+                    "NONE"
+                ]
+            )
+        ].shape[0]
+
+        resueltas = 0
+
+        if "ESTATUS_INCIDENCIA" in df_resumen.columns:
+
+            resueltas = df_resumen[
+                df_resumen["ESTATUS_INCIDENCIA"]
+                .astype(str)
+                .str.upper()
+                .isin(
+                    [
+                        "RESUELTA",
+                        "RESUELTO"
+                    ]
+                )
+            ].shape[0]
+
+        porcentaje_entregado = 0
+
+        if total > 0:
+
+            porcentaje_entregado = round(
+                (completo_entregado / total) * 100,
+                2
+            )
+
+        c1, c2, c3, c4, c5 = st.columns(
+            5
         )
 
         c1.metric(
-            "Incidencias",
-            total
+            "Total incidencias",
+            f"{total:,}"
         )
 
         c2.metric(
-            "Resueltas",
-            resumen.get(
-                "resueltas",
-                0
-            )
+            "🟢 Completo-Entregado",
+            f"{completo_entregado:,}"
         )
 
         c3.metric(
-            "Incompletas",
-            resumen.get(
-                "incompletas",
-                0
-            )
+            "🟡 Incompleta-sin Entregar",
+            f"{incompleta_sin_entregar:,}"
         )
 
         c4.metric(
-            "% resolución",
-            f"{resumen.get('porcentaje', 0)}%"
+            "🔴 Incompleta-Cancelada",
+            f"{incompleta_cancelada:,}"
+        )
+
+        c5.metric(
+            "% entregado",
+            f"{porcentaje_entregado}%"
         )
 
         st.divider()
 
         st.subheader(
-            "Últimas incidencias registradas"
+            "🚦 Semáforo de seguimiento"
         )
 
-        recientes = cargar_incidencias_recientes(
-            300
+        resumen_seguimiento = (
+            df_resumen
+            .groupby(
+                "ESTATUS_SEGUIMIENTO",
+                dropna=False
+            )
+            .size()
+            .reset_index(
+                name="TOTAL"
+            )
+            .sort_values(
+                "TOTAL",
+                ascending=False
+            )
         )
 
-        if recientes.empty:
+        resumen_seguimiento["SEMAFORO"] = resumen_seguimiento[
+            "ESTATUS_SEGUIMIENTO"
+        ].apply(
+            semaforo_seguimiento
+        )
 
-            st.info(
-                "No hay registros recientes para mostrar."
+        chart_seguimiento = (
+            alt.Chart(
+                resumen_seguimiento
+            )
+            .mark_bar()
+            .encode(
+                x=alt.X(
+                    "TOTAL:Q",
+                    title="Total"
+                ),
+                y=alt.Y(
+                    "SEMAFORO:N",
+                    sort="-x",
+                    title="Estatus seguimiento"
+                ),
+                tooltip=[
+                    "SEMAFORO",
+                    "TOTAL"
+                ]
+            )
+        )
+
+        st.altair_chart(
+            chart_seguimiento,
+            use_container_width=True
+        )
+
+        dataframe_limpio(
+            resumen_seguimiento[
+                [
+                    "SEMAFORO",
+                    "ESTATUS_SEGUIMIENTO",
+                    "TOTAL"
+                ]
+            ]
+        )
+
+        st.divider()
+
+        st.subheader(
+            "🔎 Filtros ejecutivos"
+        )
+
+        f1, f2, f3, f4 = st.columns(
+            4
+        )
+
+        entidad_filtro = f1.selectbox(
+            "Entidad",
+            ["Todas"] + sorted(
+                df_resumen["ENTIDAD"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            if "ENTIDAD" in df_resumen.columns
+            else ["Todas"]
+        )
+
+        estatus_filtro = f2.selectbox(
+            "Estatus seguimiento",
+            ["Todos"] + sorted(
+                df_resumen["ESTATUS_SEGUIMIENTO"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+        )
+
+        atribuible_filtro = f3.selectbox(
+            "Atribuible a",
+            ["Todos"] + sorted(
+                df_resumen["ATRIBUIBLE A"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            if "ATRIBUIBLE A" in df_resumen.columns
+            else ["Todos"]
+        )
+
+        responsable_filtro = f4.selectbox(
+            "Responsable",
+            ["Todos"] + sorted(
+                df_resumen["RESPONSABLE"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            if "RESPONSABLE" in df_resumen.columns
+            else ["Todos"]
+        )
+
+        df_filtrado = df_resumen.copy()
+
+        if entidad_filtro != "Todas" and "ENTIDAD" in df_filtrado.columns:
+
+            df_filtrado = df_filtrado[
+                df_filtrado["ENTIDAD"].astype(str) == entidad_filtro
+            ]
+
+        if estatus_filtro != "Todos":
+
+            df_filtrado = df_filtrado[
+                df_filtrado["ESTATUS_SEGUIMIENTO"].astype(str) == estatus_filtro
+            ]
+
+        if atribuible_filtro != "Todos" and "ATRIBUIBLE A" in df_filtrado.columns:
+
+            df_filtrado = df_filtrado[
+                df_filtrado["ATRIBUIBLE A"].astype(str) == atribuible_filtro
+            ]
+
+        if responsable_filtro != "Todos" and "RESPONSABLE" in df_filtrado.columns:
+
+            df_filtrado = df_filtrado[
+                df_filtrado["RESPONSABLE"].astype(str) == responsable_filtro
+            ]
+
+        st.caption(
+            f"Registros filtrados: {len(df_filtrado):,}"
+        )
+
+        st.divider()
+
+        col_izq, col_der = st.columns(
+            2
+        )
+
+        with col_izq:
+
+            st.subheader(
+                "🏥 Estados con más incidencias"
+            )
+
+            if "ENTIDAD" in df_filtrado.columns:
+
+                top_entidades = (
+                    df_filtrado
+                    .groupby(
+                        "ENTIDAD",
+                        dropna=False
+                    )
+                    .size()
+                    .reset_index(
+                        name="TOTAL"
+                    )
+                    .sort_values(
+                        "TOTAL",
+                        ascending=False
+                    )
+                    .head(
+                        10
+                    )
+                )
+
+                if not top_entidades.empty:
+
+                    chart_entidades = (
+                        alt.Chart(
+                            top_entidades
+                        )
+                        .mark_bar()
+                        .encode(
+                            x=alt.X(
+                                "TOTAL:Q",
+                                title="Total"
+                            ),
+                            y=alt.Y(
+                                "ENTIDAD:N",
+                                sort="-x",
+                                title="Entidad"
+                            ),
+                            tooltip=[
+                                "ENTIDAD",
+                                "TOTAL"
+                            ]
+                        )
+                    )
+
+                    st.altair_chart(
+                        chart_entidades,
+                        use_container_width=True
+                    )
+
+                    dataframe_limpio(
+                        top_entidades
+                    )
+
+        with col_der:
+
+            st.subheader(
+                "🏢 Proveedores con más incidencias"
+            )
+
+            if "PROVEEDOR" in df_filtrado.columns:
+
+                top_proveedores = (
+                    df_filtrado
+                    .groupby(
+                        "PROVEEDOR",
+                        dropna=False
+                    )
+                    .size()
+                    .reset_index(
+                        name="TOTAL"
+                    )
+                    .sort_values(
+                        "TOTAL",
+                        ascending=False
+                    )
+                    .head(
+                        10
+                    )
+                )
+
+                if not top_proveedores.empty:
+
+                    chart_proveedores = (
+                        alt.Chart(
+                            top_proveedores
+                        )
+                        .mark_bar()
+                        .encode(
+                            x=alt.X(
+                                "TOTAL:Q",
+                                title="Total"
+                            ),
+                            y=alt.Y(
+                                "PROVEEDOR:N",
+                                sort="-x",
+                                title="Proveedor"
+                            ),
+                            tooltip=[
+                                "PROVEEDOR",
+                                "TOTAL"
+                            ]
+                        )
+                    )
+
+                    st.altair_chart(
+                        chart_proveedores,
+                        use_container_width=True
+                    )
+
+                    dataframe_limpio(
+                        top_proveedores
+                    )
+
+        st.divider()
+
+        col_a, col_b = st.columns(
+            2
+        )
+
+        with col_a:
+
+            st.subheader(
+                "📌 Tipos de incidencia"
+            )
+
+            if "TIPO_INCIDENCIA" in df_filtrado.columns:
+
+                top_tipos = (
+                    df_filtrado
+                    .groupby(
+                        "TIPO_INCIDENCIA",
+                        dropna=False
+                    )
+                    .size()
+                    .reset_index(
+                        name="TOTAL"
+                    )
+                    .sort_values(
+                        "TOTAL",
+                        ascending=False
+                    )
+                    .head(
+                        10
+                    )
+                )
+
+                if not top_tipos.empty:
+
+                    st.altair_chart(
+                        alt.Chart(
+                            top_tipos
+                        )
+                        .mark_bar()
+                        .encode(
+                            x=alt.X(
+                                "TOTAL:Q",
+                                title="Total"
+                            ),
+                            y=alt.Y(
+                                "TIPO_INCIDENCIA:N",
+                                sort="-x",
+                                title="Tipo incidencia"
+                            ),
+                            tooltip=[
+                                "TIPO_INCIDENCIA",
+                                "TOTAL"
+                            ]
+                        ),
+                        use_container_width=True
+                    )
+
+                    dataframe_limpio(
+                        top_tipos
+                    )
+
+        with col_b:
+
+            st.subheader(
+                "👤 Atribuible a"
+            )
+
+            if "ATRIBUIBLE A" in df_filtrado.columns:
+
+                top_atribuible = (
+                    df_filtrado
+                    .groupby(
+                        "ATRIBUIBLE A",
+                        dropna=False
+                    )
+                    .size()
+                    .reset_index(
+                        name="TOTAL"
+                    )
+                    .sort_values(
+                        "TOTAL",
+                        ascending=False
+                    )
+                    .head(
+                        10
+                    )
+                )
+
+                if not top_atribuible.empty:
+
+                    st.altair_chart(
+                        alt.Chart(
+                            top_atribuible
+                        )
+                        .mark_bar()
+                        .encode(
+                            x=alt.X(
+                                "TOTAL:Q",
+                                title="Total"
+                            ),
+                            y=alt.Y(
+                                "ATRIBUIBLE A:N",
+                                sort="-x",
+                                title="Atribuible a"
+                            ),
+                            tooltip=[
+                                "ATRIBUIBLE A",
+                                "TOTAL"
+                            ]
+                        ),
+                        use_container_width=True
+                    )
+
+                    dataframe_limpio(
+                        top_atribuible
+                    )
+
+        st.divider()
+
+        st.subheader(
+            "⚠️ Riesgo operativo"
+        )
+
+        riesgo = df_filtrado[
+            df_filtrado["ESTATUS_SEGUIMIENTO"]
+            .astype(str)
+            .str.upper()
+            .isin(
+                [
+                    "INCOMPLETA-SIN ENTREGAR",
+                    "INCOMPLETA-CANCELADA"
+                ]
+            )
+        ].copy()
+
+        if riesgo.empty:
+
+            st.success(
+                "No hay registros de riesgo operativo con los filtros seleccionados."
             )
 
         else:
 
+            riesgo["SEMAFORO"] = riesgo[
+                "ESTATUS_SEGUIMIENTO"
+            ].apply(
+                semaforo_seguimiento
+            )
+
+            columnas_riesgo = [
+                "SEMAFORO",
+                "ENTIDAD",
+                "ORDEN",
+                "CLAVE_CNIS",
+                "PROVEEDOR",
+                "TIPO_INCIDENCIA",
+                "ATRIBUIBLE A",
+                "ESTATUS_SEGUIMIENTO",
+                "ESTATUS_INCIDENCIA",
+                "RESPONSABLE"
+            ]
+
+            columnas_riesgo = [
+                c for c in columnas_riesgo
+                if c in riesgo.columns
+            ]
+
             dataframe_limpio(
-                recientes
+                riesgo[columnas_riesgo].head(
+                    300
+                )
             )
 
         st.divider()
 
         with st.expander(
-            "⬇️ Exportar base completa de incidencias"
+            "⬇️ Exportar resumen filtrado"
         ):
 
-            st.caption(
-                "La exportación carga toda la tabla solo cuando abres esta sección."
+            excel = convertir_excel(
+                df_filtrado
             )
 
-            if st.button(
-                "Preparar Excel completo",
+            st.download_button(
+                label="⬇️ Descargar resumen ejecutivo en Excel",
+                data=excel,
+                file_name="resumen_ejecutivo_incidencias.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
-            ):
-
-                incidencias_export = cargar_incidencias()
-
-                excel = convertir_excel(
-                    incidencias_export
-                )
-
-                st.download_button(
-                    label="⬇️ Descargar incidencias en Excel",
-                    data=excel,
-                    file_name="reporte_incidencias.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+            )
 
 
 # =========================
