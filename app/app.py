@@ -1343,7 +1343,7 @@ def cargar_incidencias():
     try:
 
         datos = []
-        bloque = 1000
+        bloque = 900
         inicio = 0
 
         while True:
@@ -1354,7 +1354,8 @@ def cargar_incidencias():
                     "incidencias"
                 )
                 .select(
-                    "*"
+                    "*",
+                    count="exact"
                 )
                 .order(
                     "id",
@@ -1369,15 +1370,28 @@ def cargar_incidencias():
 
             parte = respuesta.data or []
 
+            if not parte:
+
+                break
+
             datos.extend(
                 parte
             )
 
-            if len(parte) < bloque:
-
-                break
+            total_esperado = getattr(
+                respuesta,
+                "count",
+                None
+            )
 
             inicio += bloque
+
+            if (
+                total_esperado is not None
+                and len(datos) >= total_esperado
+            ):
+
+                break
 
     except Exception as e:
 
@@ -1458,6 +1472,42 @@ def cargar_incidencias():
     return incidencias[
         columnas_ordenadas + otras_columnas
     ]
+
+
+@st.cache_data(
+    ttl=300,
+    show_spinner=False
+)
+def contar_incidencias_reales_supabase():
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "incidencias"
+            )
+            .select(
+                "id",
+                count="exact"
+            )
+            .limit(
+                1
+            )
+            .execute()
+        )
+
+        return int(
+            getattr(
+                respuesta,
+                "count",
+                0
+            ) or 0
+        )
+
+    except Exception:
+
+        return 0
 
 
 
@@ -3597,9 +3647,11 @@ if menu == "Seguimiento":
 
 st.sidebar.markdown("---")
 
+total_real_sidebar = contar_incidencias_reales_supabase()
+
 st.sidebar.write(
     "Incidencias Supabase filas:",
-    len(incidencias)
+    total_real_sidebar or len(incidencias)
 )
 
 st.sidebar.caption(
@@ -3610,7 +3662,7 @@ st.sidebar.caption(
 st.sidebar.divider()
 
 st.sidebar.caption(
-    f"Incidencias registradas: {len(incidencias):,}"
+    f"Incidencias registradas: {(total_real_sidebar or len(incidencias)):,}"
 )
 
 st.sidebar.caption(
@@ -3663,7 +3715,9 @@ if menu == "Resumen Ejecutivo":
                 semaforo_seguimiento
             )
 
-        total = len(
+        total_real_supabase = contar_incidencias_reales_supabase()
+
+        total = total_real_supabase or len(
             df_resumen
         )
 
