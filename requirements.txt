@@ -13,3 +13,4 @@ google-auth-oauthlib
 duckdb
 supabase==1.2.0
 python-dotenv
+reportlab==4.2.2
