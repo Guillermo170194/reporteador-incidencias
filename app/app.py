@@ -19,6 +19,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.units import cm
+
 
 # =========================
 # CONFIG STREAMLIT
@@ -3578,6 +3584,610 @@ def extraer_ordenes_masivas(
     return ordenes
 
 
+
+
+# =========================
+# REPORTE EJECUTIVO PDF
+# =========================
+
+def extraer_monitora(responsable):
+
+    texto = limpiar_valor_visual(responsable)
+
+    if "|" in texto:
+
+        return texto.split("|")[-1].strip()
+
+    return texto
+
+
+def preparar_df_reporte_pdf(df):
+
+    if df is None or df.empty:
+
+        return pd.DataFrame()
+
+    limpio = limpiar_df_visual(df).copy()
+
+    for columna in limpio.columns:
+
+        limpio[columna] = limpio[columna].apply(
+            limpiar_valor_visual
+        )
+
+    return limpio
+
+
+def tabla_pdf(titulo, df, max_filas=12, anchos=None):
+
+    elementos = []
+
+    styles = getSampleStyleSheet()
+
+    estilo_titulo = ParagraphStyle(
+        "TituloTablaReporte",
+        parent=styles["Heading3"],
+        textColor=colors.HexColor(COLOR_VERDE),
+        fontSize=10,
+        spaceAfter=5,
+        leading=12
+    )
+
+    estilo_celda = ParagraphStyle(
+        "CeldaReporte",
+        parent=styles["Normal"],
+        fontSize=6.2,
+        leading=7,
+        alignment=1
+    )
+
+    estilo_header = ParagraphStyle(
+        "HeaderReporte",
+        parent=styles["Normal"],
+        fontSize=6.5,
+        leading=7,
+        alignment=1,
+        textColor=colors.white
+    )
+
+    elementos.append(
+        Paragraph(titulo, estilo_titulo)
+    )
+
+    if df is None or df.empty:
+
+        elementos.append(
+            Paragraph("Sin registros.", styles["Normal"])
+        )
+
+        elementos.append(
+            Spacer(1, 0.25 * cm)
+        )
+
+        return elementos
+
+    df_tabla = preparar_df_reporte_pdf(
+        df
+    ).head(
+        max_filas
+    ).copy()
+
+    encabezados = [
+        Paragraph(str(col), estilo_header)
+        for col in df_tabla.columns
+    ]
+
+    datos = [
+        encabezados
+    ]
+
+    for _, fila in df_tabla.iterrows():
+
+        datos.append(
+            [
+                Paragraph(
+                    limpiar_valor_visual(valor),
+                    estilo_celda
+                )
+                for valor in fila.tolist()
+            ]
+        )
+
+    if anchos is None:
+
+        ancho_total = 25 * cm
+        columnas = max(
+            len(df_tabla.columns),
+            1
+        )
+        anchos = [
+            ancho_total / columnas
+        ] * columnas
+
+    tabla = Table(
+        datos,
+        repeatRows=1,
+        colWidths=anchos
+    )
+
+    tabla.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(COLOR_VERDE)),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.45, colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 6.2),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+
+    elementos.append(tabla)
+    elementos.append(Spacer(1, 0.35 * cm))
+
+    return elementos
+
+
+def agregar_encabezado_reporte(canvas, doc):
+
+    canvas.saveState()
+
+    ancho, alto = landscape(letter)
+
+    canvas.setStrokeColor(
+        colors.HexColor(COLOR_VERDE)
+    )
+
+    canvas.setLineWidth(2)
+
+    canvas.line(
+        1 * cm,
+        alto - 1.05 * cm,
+        ancho - 1 * cm,
+        alto - 1.05 * cm
+    )
+
+    canvas.setFont(
+        "Helvetica",
+        7
+    )
+
+    canvas.drawRightString(
+        ancho - 1 * cm,
+        0.55 * cm,
+        f"Página {doc.page}"
+    )
+
+    canvas.restoreState()
+
+
+def generar_reporte_ejecutivo_pdf(incidencias):
+
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        rightMargin=1 * cm,
+        leftMargin=1 * cm,
+        topMargin=1.3 * cm,
+        bottomMargin=1 * cm
+    )
+
+    styles = getSampleStyleSheet()
+
+    estilo_titulo = ParagraphStyle(
+        "TituloPrincipalReporte",
+        parent=styles["Title"],
+        textColor=colors.HexColor(COLOR_ROJO),
+        fontSize=17,
+        alignment=1,
+        leading=20,
+        spaceAfter=6
+    )
+
+    estilo_institucional = ParagraphStyle(
+        "InstitucionalReporte",
+        parent=styles["Normal"],
+        fontSize=9,
+        alignment=1,
+        leading=11,
+        spaceAfter=4
+    )
+
+    estilo_subtitulo = ParagraphStyle(
+        "SubtituloReporte",
+        parent=styles["Heading2"],
+        textColor=colors.HexColor(COLOR_VERDE),
+        fontSize=12,
+        leading=14,
+        spaceBefore=4,
+        spaceAfter=6
+    )
+
+    normal = styles["Normal"]
+
+    elementos = []
+
+    elementos.append(
+        Paragraph(
+            "UNIDAD DE ADMINISTRACIÓN Y FINANZAS<br/>"
+            "COORDINACIÓN DE RECURSOS MATERIALES<br/>"
+            "COORDINACIÓN TÉCNICA DE ABASTO DE INSUMOS PARA LA SALUD",
+            estilo_institucional
+        )
+    )
+
+    elementos.append(
+        Paragraph(
+            "REPORTE EJECUTIVO DE INCIDENCIAS",
+            estilo_titulo
+        )
+    )
+
+    hoy = fecha_hoy_sistema()
+
+    elementos.append(
+        Paragraph(
+            f"Fecha del reporte: {hoy}",
+            normal
+        )
+    )
+
+    elementos.append(
+        Spacer(1, 0.25 * cm)
+    )
+
+    if incidencias is None or incidencias.empty:
+
+        elementos.append(
+            Paragraph(
+                "Sin información disponible.",
+                normal
+            )
+        )
+
+        doc.build(
+            elementos,
+            onFirstPage=agregar_encabezado_reporte,
+            onLaterPages=agregar_encabezado_reporte
+        )
+
+        buffer.seek(0)
+
+        return buffer
+
+    df = incidencias.copy()
+
+    for columna in [
+        "FECHA_REGISTRO",
+        "RESPONSABLE",
+        "ENTIDAD",
+        "ORDEN",
+        "CLUES_DESTINO",
+        "TIPO_INCIDENCIA",
+        "ATRIBUIBLE A",
+        "ESTATUS_INCIDENCIA",
+        "ESTATUS_SEGUIMIENTO"
+    ]:
+
+        if columna not in df.columns:
+
+            df[columna] = ""
+
+    df["FECHA_REGISTRO_DT"] = pd.to_datetime(
+        df["FECHA_REGISTRO"],
+        errors="coerce"
+    )
+
+    df["MONITORA"] = df["RESPONSABLE"].apply(
+        extraer_monitora
+    )
+
+    df_hoy = df[
+        df["FECHA_REGISTRO_DT"].dt.strftime("%Y-%m-%d") == hoy
+    ].copy()
+
+    total_hoy = len(df_hoy)
+
+    monitoras_hoy = df_hoy["MONITORA"].replace(
+        "",
+        pd.NA
+    ).dropna().nunique()
+
+    entidades_hoy = df_hoy["ENTIDAD"].replace(
+        "",
+        pd.NA
+    ).dropna().nunique()
+
+    ordenes_hoy = df_hoy["ORDEN"].replace(
+        "",
+        pd.NA
+    ).dropna().nunique()
+
+    elementos.append(
+        Paragraph(
+            "1. Resumen del día",
+            estilo_subtitulo
+        )
+    )
+
+    indicadores_dia = pd.DataFrame(
+        [
+            ["Incidencias capturadas hoy", total_hoy],
+            ["Monitoras que capturaron", monitoras_hoy],
+            ["Entidades atendidas", entidades_hoy],
+            ["Órdenes registradas", ordenes_hoy],
+        ],
+        columns=[
+            "Indicador",
+            "Total"
+        ]
+    )
+
+    elementos += tabla_pdf(
+        "Indicadores del día",
+        indicadores_dia,
+        max_filas=10,
+        anchos=[
+            9 * cm,
+            4 * cm
+        ]
+    )
+
+    if df_hoy.empty:
+
+        elementos.append(
+            Paragraph(
+                "No se registraron capturas durante el día del reporte.",
+                normal
+            )
+        )
+
+        elementos.append(
+            Spacer(1, 0.3 * cm)
+        )
+
+    else:
+
+        por_monitora_hoy = (
+            df_hoy
+            .groupby(
+                "MONITORA",
+                dropna=False
+            )
+            .size()
+            .reset_index(
+                name="Capturas"
+            )
+            .sort_values(
+                "Capturas",
+                ascending=False
+            )
+        )
+
+        elementos += tabla_pdf(
+            "Capturas del día por monitora",
+            por_monitora_hoy,
+            max_filas=10,
+            anchos=[
+                12 * cm,
+                4 * cm
+            ]
+        )
+
+        por_entidad_hoy = (
+            df_hoy
+            .groupby(
+                "ENTIDAD",
+                dropna=False
+            )
+            .size()
+            .reset_index(
+                name="Incidencias"
+            )
+            .sort_values(
+                "Incidencias",
+                ascending=False
+            )
+        )
+
+        elementos += tabla_pdf(
+            "Entidades trabajadas hoy",
+            por_entidad_hoy,
+            max_filas=10,
+            anchos=[
+                10 * cm,
+                4 * cm
+            ]
+        )
+
+        detalle_hoy = df_hoy[
+            [
+                "ORDEN",
+                "ENTIDAD",
+                "CLUES_DESTINO",
+                "TIPO_INCIDENCIA",
+                "ATRIBUIBLE A",
+                "ESTATUS_INCIDENCIA",
+                "MONITORA"
+            ]
+        ].copy()
+
+        elementos += tabla_pdf(
+            "Detalle breve del día",
+            detalle_hoy,
+            max_filas=15,
+            anchos=[
+                4.2 * cm,
+                3.0 * cm,
+                3.0 * cm,
+                5.0 * cm,
+                3.0 * cm,
+                3.0 * cm,
+                4.0 * cm
+            ]
+        )
+
+    elementos.append(
+        Paragraph(
+            "2. Resumen general acumulado",
+            estilo_subtitulo
+        )
+    )
+
+    total_general = len(df)
+
+    resueltas = df[
+        df["ESTATUS_INCIDENCIA"]
+        .astype(str)
+        .str.upper()
+        .isin(
+            [
+                "RESUELTA",
+                "RESUELTO"
+            ]
+        )
+    ].shape[0]
+
+    en_proceso = df[
+        df["ESTATUS_INCIDENCIA"]
+        .astype(str)
+        .str.upper()
+        .eq("EN PROCESO")
+    ].shape[0]
+
+    rechazadas = df[
+        df["ESTATUS_INCIDENCIA"]
+        .astype(str)
+        .str.upper()
+        .eq("RECHAZADO")
+    ].shape[0]
+
+    monitoras_general = df["MONITORA"].replace(
+        "",
+        pd.NA
+    ).dropna().nunique()
+
+    indicadores_general = pd.DataFrame(
+        [
+            ["Total acumulado", total_general],
+            ["Resueltas", resueltas],
+            ["En proceso", en_proceso],
+            ["Rechazadas", rechazadas],
+            ["Monitoras con capturas", monitoras_general],
+        ],
+        columns=[
+            "Indicador",
+            "Total"
+        ]
+    )
+
+    elementos += tabla_pdf(
+        "Indicadores generales",
+        indicadores_general,
+        max_filas=10,
+        anchos=[
+            9 * cm,
+            4 * cm
+        ]
+    )
+
+    por_monitora_general = (
+        df
+        .groupby(
+            "MONITORA",
+            dropna=False
+        )
+        .size()
+        .reset_index(
+            name="Capturas"
+        )
+        .sort_values(
+            "Capturas",
+            ascending=False
+        )
+    )
+
+    elementos += tabla_pdf(
+        "Capturas acumuladas por monitora",
+        por_monitora_general,
+        max_filas=12,
+        anchos=[
+            12 * cm,
+            4 * cm
+        ]
+    )
+
+    por_tipo = (
+        df
+        .groupby(
+            "TIPO_INCIDENCIA",
+            dropna=False
+        )
+        .size()
+        .reset_index(
+            name="Total"
+        )
+        .sort_values(
+            "Total",
+            ascending=False
+        )
+    )
+
+    elementos += tabla_pdf(
+        "Principales tipos de incidencia",
+        por_tipo,
+        max_filas=10,
+        anchos=[
+            14 * cm,
+            4 * cm
+        ]
+    )
+
+    por_entidad = (
+        df
+        .groupby(
+            "ENTIDAD",
+            dropna=False
+        )
+        .size()
+        .reset_index(
+            name="Total"
+        )
+        .sort_values(
+            "Total",
+            ascending=False
+        )
+    )
+
+    elementos += tabla_pdf(
+        "Entidades con más incidencias",
+        por_entidad,
+        max_filas=10,
+        anchos=[
+            10 * cm,
+            4 * cm
+        ]
+    )
+
+    doc.build(
+        elementos,
+        onFirstPage=agregar_encabezado_reporte,
+        onLaterPages=agregar_encabezado_reporte
+    )
+
+    buffer.seek(0)
+
+    return buffer
+
+
 # =========================
 # APP
 # =========================
@@ -3702,6 +4312,29 @@ if menu == "Resumen Ejecutivo":
         "📊 Resumen Ejecutivo"
     )
 
+
+    st.markdown(
+        "### 📄 Reporte Ejecutivo PDF"
+    )
+
+    if st.button(
+        "📄 Generar reporte ejecutivo PDF",
+        use_container_width=True
+    ):
+
+        pdf = generar_reporte_ejecutivo_pdf(
+            incidencias
+        )
+
+        st.download_button(
+            label="⬇️ Descargar reporte ejecutivo",
+            data=pdf,
+            file_name=f"REPORTE_EJECUTIVO_INCIDENCIAS_{fecha_hoy_sistema()}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+    st.divider()
     df_resumen = incidencias.copy()
 
     if df_resumen.empty:
