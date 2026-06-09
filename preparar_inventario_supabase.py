@@ -32,19 +32,16 @@ def tomar(opciones):
 
             return df[col]
 
-    return ""
+    return pd.Series([""] * len(df))
 
 
 def limpiar_texto(serie):
-
-    if isinstance(serie, str):
-
-        return serie
 
     return (
         serie
         .fillna("")
         .astype(str)
+        .str.strip()
         .replace(
             {
                 "nan": "",
@@ -56,6 +53,7 @@ def limpiar_texto(serie):
 
 
 inventario = pd.DataFrame()
+
 
 inventario["entidad"] = limpiar_texto(
     tomar(
@@ -113,17 +111,34 @@ inventario["descripcion"] = limpiar_texto(
     )
 )
 
-inventario["piezas"] = limpiar_texto(
-    tomar(
-        [
-            "PIEZAS",
-            "Piezas",
-            "piezas",
-            "EXISTENCIA",
-            "Existencia"
-        ]
+
+# =========================
+# PIEZAS NUMÉRICO
+# =========================
+
+piezas = pd.to_numeric(
+    limpiar_texto(
+        tomar(
+            [
+                "PIEZAS",
+                "Piezas",
+                "piezas",
+                "EXISTENCIA",
+                "Existencia"
+            ]
+        )
     )
+    .str.replace(",", "", regex=False),
+    errors="coerce"
 )
+
+inventario["piezas"] = (
+    piezas
+    .fillna(0)
+    .round(0)
+    .astype("int64")
+)
+
 
 inventario["lote"] = limpiar_texto(
     tomar(
@@ -145,6 +160,11 @@ inventario["estatus"] = limpiar_texto(
     )
 )
 
+
+# =========================
+# FECHA CADUCIDAD
+# =========================
+
 fecha = tomar(
     [
         "CADUCIDAD",
@@ -162,13 +182,25 @@ fecha = pd.to_datetime(
 
 inventario["caducidad"] = fecha.dt.strftime(
     "%Y-%m-%d"
-)
+).fillna("")
+
+
+# =========================
+# LIMPIEZA FINAL
+# =========================
 
 inventario = inventario.fillna("")
 
 inventario = inventario[
-    inventario["clave_cnis"].astype(str).str.strip() != ""
+    inventario["clave_cnis"]
+    .astype(str)
+    .str.strip() != ""
 ].copy()
+
+
+# =========================
+# EXPORTAR CSV
+# =========================
 
 inventario.to_csv(
     SALIDA,
@@ -176,7 +208,9 @@ inventario.to_csv(
     encoding="utf-8-sig"
 )
 
-print("CSV inventario generado correctamente")
+print("\nCSV inventario generado correctamente")
 print("Filas:", len(inventario))
 print("Columnas:", inventario.columns.tolist())
+
+print("\nPrimeras filas:")
 print(inventario.head())

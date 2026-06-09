@@ -1,3 +1,4 @@
+```python
 import pandas as pd
 
 
@@ -64,6 +65,10 @@ def limpiar_texto(
 nuevo = pd.DataFrame()
 
 
+# =========================
+# FECHA
+# =========================
+
 fecha = tomar(
     [
         "FECHA_REGISTRO",
@@ -83,6 +88,10 @@ nuevo["fecha_registro"] = fecha.dt.strftime(
     "%Y-%m-%d"
 )
 
+
+# =========================
+# GENERALES
+# =========================
 
 nuevo["origen_registro"] = "CARGA EXCEL"
 
@@ -159,14 +168,26 @@ nuevo["unidad_destino"] = limpiar_texto(
     )
 )
 
+
+# =========================
+# PROVEEDOR
+# =========================
+
 nuevo["proveedor"] = limpiar_texto(
     tomar(
         [
             "PROVEEDOR",
-            "Proveedor"
+            "Proveedor",
+            "PROVEDOR U O.L",
+            "PROVEEDOR U O.L"
         ]
     )
 )
+
+
+# =========================
+# ORDEN
+# =========================
 
 nuevo["orden"] = limpiar_texto(
     tomar(
@@ -246,6 +267,11 @@ nuevo["grupo_terapeutico"] = limpiar_texto(
     )
 )
 
+
+# =========================
+# ESTATUS
+# =========================
+
 nuevo["estatus_operativo"] = limpiar_texto(
     tomar(
         [
@@ -258,24 +284,20 @@ nuevo["estatus_operativo"] = limpiar_texto(
 nuevo["estatus_base"] = limpiar_texto(
     tomar(
         [
-            "ESTATUS_BASE"
+            "ESTATUS_BASE",
+            "ESTATUS"
         ]
     )
 )
 
-nuevo["origen_compendio"] = limpiar_texto(
-    tomar(
-        [
-            "ORIGEN_COMPENDIO"
-        ]
-    )
-)
+nuevo["origen_compendio"] = ""
 
 nuevo["operador_logistico"] = limpiar_texto(
     tomar(
         [
             "OPERADOR_LOGISTICO",
-            "OPERADOR LOGÍSTICO"
+            "OPERADOR LOGÍSTICO",
+            "PROVEDOR U O.L"
         ]
     )
 )
@@ -304,11 +326,17 @@ nuevo["estatus_incidencia_completa"] = limpiar_texto(
     )
 )
 
+
+# =========================
+# INCIDENCIA
+# =========================
+
 nuevo["tipo_incidencia"] = limpiar_texto(
     tomar(
         [
             "TIPO_INCIDENCIA",
-            "TIPO DE INCIDENCIA"
+            "TIPO DE INCIDENCIA",
+            "ACTIVIDAD / INCIDENCIA"
         ]
     )
 )
@@ -327,7 +355,8 @@ nuevo["estatus_incidencia"] = limpiar_texto(
     tomar(
         [
             "ESTATUS_INCIDENCIA",
-            "ESTATUS INCIDENCIA"
+            "ESTATUS INCIDENCIA",
+            "ESTATUS"
         ]
     )
 )
@@ -351,7 +380,8 @@ nuevo["observaciones"] = limpiar_texto(
 nuevo["pdf_cedula_rechazo"] = limpiar_texto(
     tomar(
         [
-            "PDF_CEDULA_RECHAZO"
+            "PDF_CEDULA_RECHAZO",
+            "CEDULAS DE RECHAZO"
         ]
     )
 )
@@ -359,11 +389,16 @@ nuevo["pdf_cedula_rechazo"] = limpiar_texto(
 nuevo["pdf_correo_seguimiento"] = limpiar_texto(
     tomar(
         [
-            "PDF_CORREO_SEGUIMIENTO"
+            "PDF_CORREO_SEGUIMIENTO",
+            "CORREOS DE SEGUIMIENTO"
         ]
     )
 )
 
+
+# =========================
+# LIMPIEZA FINAL
+# =========================
 
 nuevo = nuevo.fillna(
     ""
@@ -392,3 +427,4 @@ print(
 print(
     nuevo.head()
 )
+```
