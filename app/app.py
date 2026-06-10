@@ -539,10 +539,31 @@ st.markdown(
 ATRIBUIBLES = [
     "Estado",
     "Proveedor",
-    "Operador logístico",
+    "Operador Logístico",
     "IMSS-BIENESTAR",
     "Otro"
 ]
+
+
+def homologar_atribuible(valor):
+
+    texto = limpiar_valor_visual(valor).upper().strip()
+
+    equivalencias = {
+        "ESTADO": "Estado",
+        "PROVEEDOR": "Proveedor",
+        "OPERADOR LOGISTICO": "Operador Logístico",
+        "OPERADOR LOGÍSTICO": "Operador Logístico",
+        "OPERADOR": "Operador Logístico",
+        "O.L.": "Operador Logístico",
+        "OL": "Operador Logístico",
+        "IMSS-BIENESTAR": "IMSS-BIENESTAR",
+        "IMSS BIENESTAR": "IMSS-BIENESTAR",
+        "IMSSB": "IMSS-BIENESTAR",
+        "OTRO": "Otro"
+    }
+
+    return equivalencias.get(texto, limpiar_valor_visual(valor).title() if texto else "")
 
 
 
@@ -563,6 +584,11 @@ MONITORES = []
 
 for subdirector, lista_monitoras in RESPONSABLES_FIJOS.items():
 
+    # Primero se agrega el supervisor solo.
+    MONITORES.append(
+        subdirector
+    )
+
     for monitora in lista_monitoras:
 
         MONITORES.append(
@@ -576,6 +602,8 @@ TIPOS_INCIDENCIA_GENERAL = [
     "ENTREGA EN CLUES DIFERENTE",
     "ENTREGA FUERA DEL EJERCICIO FISCAL",
     "FALTA DE CITA",
+    "Estado Rechaza Cita",
+    "No Acudió a su cita",
     "INSUMO EN MAL ESTADO",
     "INSUMO INCOMPLETO",
     "MAL ETIQUETADO",
@@ -1481,6 +1509,36 @@ def cargar_incidencias():
     incidencias = incidencias.rename(
         columns=renombres
     )
+
+    # Homologación para registros importados desde Excel con encabezados distintos.
+    columnas_alternas = {
+        "CLAVE_CNIS": ["CLAVE CNIS", "CLAVE", "Clave CNIS", "clave", "clave cnis"],
+        "ORDEN": ["ORDEN SUMINISTRO", "ORDEN DE SUMINISTRO", "Orden de Suministro", "NO. ORDEN"],
+        "ATRIBUIBLE A": ["ATRIBUIBLE_A", "ATRIBUIBLE", "Atribuible a", "atribuible"],
+        "PDF_CEDULA_RECHAZO": ["PDF CEDULA RECHAZO", "PDF CÉDULA RECHAZO", "CEDULA_RECHAZO", "CÉDULA RECHAZO"],
+        "PDF_CORREO_SEGUIMIENTO": ["PDF CORREO SEGUIMIENTO", "CORREO_SEGUIMIENTO", "CORREO SEGUIMIENTO"]
+    }
+
+    for destino, alternas in columnas_alternas.items():
+
+        if destino not in incidencias.columns:
+
+            incidencias[destino] = ""
+
+        for alterna in alternas:
+
+            if alterna in incidencias.columns:
+
+                incidencias[destino] = incidencias[destino].where(
+                    incidencias[destino].astype(str).str.strip().ne(""),
+                    incidencias[alterna]
+                )
+
+    if "ATRIBUIBLE A" in incidencias.columns:
+
+        incidencias["ATRIBUIBLE A"] = incidencias["ATRIBUIBLE A"].apply(
+            homologar_atribuible
+        )
 
     for columna, valor_default in columnas_necesarias.items():
 
@@ -2505,7 +2563,7 @@ def guardar_incidencia(
         "estatus_incidencia_completa": preparar_valor_supabase(nueva.get("ESTATUS_INCIDENCIA_COMPLETA", "")),
         "estatus_seguimiento": preparar_valor_supabase(nueva.get("ESTATUS_SEGUIMIENTO", "")),
         "tipo_incidencia": preparar_valor_supabase(nueva.get("TIPO_INCIDENCIA", "")),
-        "atribuible_a": preparar_valor_supabase(nueva.get("ATRIBUIBLE A", "")),
+        "atribuible_a": preparar_valor_supabase(homologar_atribuible(nueva.get("ATRIBUIBLE A", ""))),
         "estatus_incidencia": preparar_valor_supabase(nueva.get("ESTATUS_INCIDENCIA", "")),
         "responsable": preparar_valor_supabase(nueva.get("RESPONSABLE", "")),
         "observaciones": preparar_valor_supabase(nueva.get("OBSERVACIONES", "")),
@@ -2755,6 +2813,53 @@ def subir_pdf_evidencia_drive(
         )
 
         return ""
+
+def actualizar_evidencia_incidencia(
+    incidencia_id,
+    archivo,
+    tipo_pdf,
+    orden,
+    estado,
+    clues
+):
+
+    if archivo is None:
+
+        return False
+
+    link = subir_pdf_evidencia_drive(
+        archivo,
+        orden,
+        tipo_pdf,
+        estado,
+        clues
+    )
+
+    if not link:
+
+        return False
+
+    columna = (
+        "pdf_cedula_rechazo"
+        if tipo_pdf == "cedula"
+        else "pdf_correo_seguimiento"
+    )
+
+    supabase.table(
+        "incidencias"
+    ).update(
+        {
+            columna: link
+        }
+    ).eq(
+        "id",
+        incidencia_id
+    ).execute()
+
+    st.cache_data.clear()
+
+    return True
+
 
 def convertir_excel(
     df
@@ -3126,16 +3231,6 @@ def obtener_datos_orden_para_registro(
         estatus_entrega_estado
     )
 
-    cpm_clues = obtener_cpm_clues_supabase(
-        clues_destino,
-        clave
-    )
-
-    inventario_clues = obtener_inventario_clues_supabase(
-        clues_destino,
-        clave
-    )
-
     datos = {
         "resultado": resultado,
         "fila": fila,
@@ -3159,9 +3254,7 @@ def obtener_datos_orden_para_registro(
         "estatus_orden": estatus_orden,
         "estatus_recepcion_ol": estatus_recepcion_ol,
         "estatus_entrega_estado": estatus_entrega_estado,
-        "estatus_completa": estatus_completa,
-        "cpm_clues": cpm_clues,
-        "inventario_clues": inventario_clues
+        "estatus_completa": estatus_completa
     }
 
     return datos, resultado
@@ -4287,7 +4380,7 @@ st.sidebar.write(
 )
 
 st.sidebar.caption(
-    "Agenda: Supabase"
+    "Agenda desactivada"
 )
 
 
@@ -4950,7 +5043,7 @@ if menu == "Registrar incidencia":
     )
 
     st.caption(
-        "Modo rápido: compendio, agenda e incidencias se consultan directo en Supabase."
+        "Modo rápido: compendio e incidencias se consultan directo en Supabase."
     )
 
     modo_registro = st.radio(
@@ -5025,34 +5118,6 @@ if menu == "Registrar incidencia":
                 tipo_red = datos_orden["tipo_red"]
                 grupo_terapeutico = datos_orden["grupo_terapeutico"]
                 estatus_orden = datos_orden["estatus_orden"]
-                cpm_clues = datos_orden.get(
-                    "cpm_clues",
-                    {
-                        "encontrado": False,
-                        "criterio": "NO CONSULTADO",
-                        "registro": None,
-                        "resultados": pd.DataFrame()
-                    }
-                )
-                inventario_clues = datos_orden.get(
-                    "inventario_clues",
-                    {
-                        "encontrado": False,
-                        "total_piezas": 0,
-                        "lotes": 0,
-                        "caducidad_minima": "",
-                        "estatus": "NO CONSULTADO",
-                        "resultados": pd.DataFrame()
-                    }
-                )
-                estatus_recepcion_ol = datos_orden["estatus_recepcion_ol"]
-                estatus_entrega_estado = datos_orden["estatus_entrega_estado"]
-                estatus_completa = datos_orden["estatus_completa"]
-
-                cita = obtener_cita_agenda_supabase(
-                    orden
-                )
-
                 incidencias_previas = obtener_incidencias_previas_supabase(
                     orden
                 )
@@ -5066,8 +5131,8 @@ if menu == "Registrar incidencia":
 
                 st.divider()
 
-                c_estado, c_cita, c_previas = st.columns(
-                    3
+                c_estado, c_previas = st.columns(
+                    2
                 )
 
                 with c_estado:
@@ -5084,35 +5149,6 @@ if menu == "Registrar incidencia":
 
                         st.success(
                             "✅ Orden ACTIVA"
-                        )
-
-                with c_cita:
-
-                    if cita is None:
-
-                        st.warning(
-                            "📅 Sin cita localizada"
-                        )
-
-                    else:
-
-                        fecha_cita = obtener_valor(
-                            cita,
-                            [
-                                "fecha_cita",
-                                "_FECHA_CITA",
-                                "FECHA  DE CITA AGENDA",
-                                "FECHA DE CITA AGENDA",
-                                "fecha_de_cita_agenda",
-                                "Fecha  de cita agenda",
-                                "Fecha de cita agenda",
-                                "FECHA CITA",
-                                "Fecha cita"
-                            ]
-                        )
-
-                        st.success(
-                            f"📅 Cita: {fecha_a_texto(fecha_cita)}"
                         )
 
                 with c_previas:
@@ -5246,214 +5282,6 @@ if menu == "Registrar incidencia":
                     descripcion,
                     disabled=True
                 )
-
-                st.subheader(
-                    "📈 Indicador CPM por CLUES"
-                )
-
-                if cpm_clues.get(
-                    "encontrado",
-                    False
-                ):
-
-                    registro_cpm = cpm_clues.get(
-                        "registro",
-                        {}
-                    )
-
-                    st.success(
-                        f"✅ La CLUES tiene CPM registrado para esta clave ({cpm_clues.get('criterio', '')})."
-                    )
-
-                    c_cpm1, c_cpm2, c_cpm3, c_cpm4 = st.columns(
-                        4
-                    )
-
-                    c_cpm1.metric(
-                        "CPM mensual",
-                        registro_cpm.get(
-                            "cpm",
-                            ""
-                        )
-                    )
-
-                    c_cpm2.metric(
-                        "Importe mensual",
-                        formatear_importe(
-                            registro_cpm.get(
-                                "importe",
-                                ""
-                            )
-                        )
-                    )
-
-                    c_cpm3.text_input(
-                        "CLUES CPM",
-                        texto_limpio(
-                        registro_cpm.get(
-                            "clues_busqueda",
-                            ""
-                        )
-                    ),
-                        disabled=True
-                    )
-
-                    c_cpm4.text_input(
-                        "Tipo",
-                        texto_limpio(
-                        registro_cpm.get(
-                            "tipo",
-                            ""
-                        )
-                    ),
-                        disabled=True
-                    )
-
-                    c_cpm5, c_cpm6 = st.columns(
-                        2
-                    )
-
-                    c_cpm5.text_input(
-                        "Unidad CPM",
-                        texto_limpio(
-                        registro_cpm.get(
-                            "unidad",
-                            ""
-                        )
-                    ),
-                        disabled=True
-                    )
-
-                    c_cpm6.text_input(
-                        "Grupo terapéutico CPM",
-                        texto_limpio(
-                        registro_cpm.get(
-                            "grupo_terapeutico",
-                            ""
-                        )
-                    ),
-                        disabled=True
-                    )
-
-                    resultados_cpm = cpm_clues.get(
-                        "resultados",
-                        pd.DataFrame()
-                    )
-
-                    if (
-                        isinstance(
-                            resultados_cpm,
-                            pd.DataFrame
-                        )
-                        and len(
-                            resultados_cpm
-                        ) > 1
-                    ):
-
-                        with st.expander(
-                            "Ver coincidencias CPM"
-                        ):
-
-                            dataframe_limpio(
-                                resultados_cpm
-                            )
-
-                else:
-
-                    st.warning(
-                        "⚪ La CLUES destino no tiene CPM registrado para esta clave."
-                    )
-
-                st.subheader(
-                    "📦 Inventario actual por CLUES"
-                )
-
-                if inventario_clues.get(
-                    "encontrado",
-                    False
-                ):
-
-                    total_inv = inventario_clues.get(
-                        "total_piezas",
-                        0
-                    )
-
-                    if total_inv > 0:
-
-                        st.success(
-                            "✅ La CLUES tiene inventario registrado para esta clave."
-                        )
-
-                    else:
-
-                        st.warning(
-                            "⚠️ La CLUES aparece en inventario, pero sin piezas disponibles."
-                        )
-
-                    c_inv1, c_inv2, c_inv3, c_inv4 = st.columns(
-                        4
-                    )
-
-                    c_inv1.metric(
-                        "Piezas inventario",
-                        formatear_numero(
-                            total_inv
-                        )
-                    )
-
-                    c_inv2.metric(
-                        "Lotes",
-                        inventario_clues.get(
-                            "lotes",
-                            0
-                        )
-                    )
-
-                    c_inv3.text_input(
-                        "Caducidad más próxima",
-                        texto_limpio(
-                        inventario_clues.get(
-                            "caducidad_minima",
-                            ""
-                        )
-                    ),
-                        disabled=True
-                    )
-
-                    c_inv4.text_input(
-                        "Estatus inventario",
-                        texto_limpio(
-                        inventario_clues.get(
-                            "estatus",
-                            ""
-                        )
-                    ),
-                        disabled=True
-                    )
-
-                    resultados_inv = inventario_clues.get(
-                        "resultados",
-                        pd.DataFrame()
-                    )
-
-                    if isinstance(
-                        resultados_inv,
-                        pd.DataFrame
-                    ):
-
-                        with st.expander(
-                            "Ver detalle de inventario por lote"
-                        ):
-
-                            dataframe_limpio(
-                                resultados_inv
-                            )
-
-                else:
-
-                    st.warning(
-                        "⚪ La CLUES destino no tiene inventario registrado para esta clave."
-                    )
 
                 st.divider()
 
@@ -5732,8 +5560,7 @@ if menu == "Registrar incidencia":
                             "ENTIDAD": "",
                             "CLUES": "",
                             "PROVEEDOR": "",
-                            "INCIDENCIAS_PREVIAS": 0,
-                            "CITA": ""
+                            "INCIDENCIAS_PREVIAS": 0
                         }
                     )
 
@@ -5743,44 +5570,6 @@ if menu == "Registrar incidencia":
                     datos_m["orden"]
                 )
 
-                cita_m = obtener_cita_agenda_supabase(
-                    datos_m["orden"]
-                )
-
-                fecha_cita_m = ""
-
-                if cita_m is not None:
-
-                    fecha_cita_m = fecha_a_texto(
-                        obtener_valor(
-                            cita_m,
-                            [
-                                "fecha_cita"
-                            ]
-                        )
-                    )
-
-                cpm_m = datos_m.get(
-                    "cpm_clues",
-                    {
-                        "encontrado": False,
-                        "registro": {}
-                    }
-                )
-
-                registro_cpm_m = cpm_m.get(
-                    "registro",
-                    {}
-                ) or {}
-
-                inventario_m = datos_m.get(
-                    "inventario_clues",
-                    {
-                        "encontrado": False,
-                        "total_piezas": 0
-                    }
-                )
-
                 registros_preview.append(
                     {
                         "ORDEN": datos_m["orden"],
@@ -5788,12 +5577,7 @@ if menu == "Registrar incidencia":
                         "ENTIDAD": datos_m["entidad"],
                         "CLUES": datos_m["clues_destino"],
                         "PROVEEDOR": datos_m["proveedor"],
-                        "CPM": "SI" if cpm_m.get("encontrado", False) else "NO",
-                        "CPM_MENSUAL": registro_cpm_m.get("cpm", ""),
-                        "INVENTARIO": "SI" if inventario_m.get("encontrado", False) else "NO",
-                        "PIEZAS_INVENTARIO": inventario_m.get("total_piezas", 0),
-                        "INCIDENCIAS_PREVIAS": len(previas_m),
-                        "CITA": fecha_cita_m
+                        "INCIDENCIAS_PREVIAS": len(previas_m)
                     }
                 )
 
@@ -5962,6 +5746,12 @@ elif menu == "Seguimiento":
 
             df_seg["ESTATUS_SEGUIMIENTO"] = ""
 
+        if "ATRIBUIBLE A" in df_seg.columns:
+
+            df_seg["ATRIBUIBLE A"] = df_seg["ATRIBUIBLE A"].apply(
+                homologar_atribuible
+            )
+
         df_seg["SEMAFORO"] = df_seg["ESTATUS_SEGUIMIENTO"].apply(
             semaforo_seguimiento
         )
@@ -6071,6 +5861,86 @@ elif menu == "Seguimiento":
         dataframe_limpio(
             df_seg[columnas_mostrar]
         )
+
+        st.divider()
+
+        with st.expander(
+            "📎 Agregar archivo a una incidencia previa"
+        ):
+
+            if "ID" not in df_seg.columns:
+
+                st.warning(
+                    "No encontré la columna ID para actualizar evidencias."
+                )
+
+            else:
+
+                df_archivos = df_seg.copy()
+
+                df_archivos["_OPCION_ARCHIVO"] = df_archivos.apply(
+                    lambda x: f"{x.get('ID', '')} | {x.get('ORDEN', '')} | {x.get('CLAVE_CNIS', '')} | {x.get('TIPO_INCIDENCIA', '')}",
+                    axis=1
+                )
+
+                opcion_archivo = st.selectbox(
+                    "Incidencia a actualizar",
+                    df_archivos["_OPCION_ARCHIVO"].astype(str).tolist()
+                )
+
+                fila_archivo = df_archivos[
+                    df_archivos["_OPCION_ARCHIVO"].astype(str) == str(opcion_archivo)
+                ].iloc[0]
+
+                tipo_archivo = st.selectbox(
+                    "Tipo de archivo",
+                    [
+                        "Cédula rechazo",
+                        "Correo seguimiento"
+                    ]
+                )
+
+                archivo_nuevo = st.file_uploader(
+                    "Archivo PDF",
+                    type=[
+                        "pdf"
+                    ],
+                    key="archivo_incidencia_previa"
+                )
+
+                if st.button(
+                    "📎 Subir archivo a incidencia previa",
+                    use_container_width=True
+                ):
+
+                    tipo_pdf = (
+                        "cedula"
+                        if tipo_archivo == "Cédula rechazo"
+                        else "correo"
+                    )
+
+                    ok = actualizar_evidencia_incidencia(
+                        fila_archivo.get("ID", ""),
+                        archivo_nuevo,
+                        tipo_pdf,
+                        fila_archivo.get("ORDEN", fila_archivo.get("ORDEN_BUSCADA", "")),
+                        fila_archivo.get("ENTIDAD", "SIN_ESTADO"),
+                        fila_archivo.get("CLUES_DESTINO", "SIN_CLUES")
+                    )
+
+                    if ok:
+
+                        st.success(
+                            "Archivo agregado correctamente a la incidencia previa."
+                        )
+
+                        st.rerun()
+
+                    else:
+
+                        st.error(
+                            "No se pudo subir el archivo. Revisa que seleccionaste un PDF."
+                        )
 
         excel = convertir_excel(
             df_seg
