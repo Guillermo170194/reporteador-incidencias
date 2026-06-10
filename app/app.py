@@ -4777,19 +4777,19 @@ if menu == "Registrar incidencia":
 
                 c15.text_input(
                     "Estatus recepción OL",
-                    estatus_recepcion_ol,
+                    datos_orden.get("estatus_recepcion_ol", ""),
                     disabled=True
                 )
 
                 c16.text_input(
                     "Estatus entrega Estado / CLUES",
-                    estatus_entrega_estado,
+                    datos_orden.get("estatus_entrega_estado", ""),
                     disabled=True
                 )
 
                 st.text_input(
                     "Incidencia automática",
-                    estatus_completa,
+                    datos_orden.get("estatus_completa", ""),
                     disabled=True
                 )
 
