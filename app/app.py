@@ -4578,6 +4578,9 @@ if menu == "Registrar incidencia":
                 tipo_red = datos_orden["tipo_red"]
                 grupo_terapeutico = datos_orden["grupo_terapeutico"]
                 estatus_orden = datos_orden["estatus_orden"]
+                estatus_recepcion_ol = datos_orden.get("estatus_recepcion_ol", "")
+                estatus_entrega_estado = datos_orden.get("estatus_entrega_estado", "")
+                estatus_completa = datos_orden.get("estatus_completa", "")
                 incidencias_previas = obtener_incidencias_previas_supabase(
                     orden
                 )
