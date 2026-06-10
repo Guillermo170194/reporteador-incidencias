@@ -4777,19 +4777,19 @@ if menu == "Registrar incidencia":
 
                 c15.text_input(
                     "Estatus recepción OL",
-                    datos_orden.get("estatus_recepcion_ol", ""),
+                    estatus_recepcion_ol,
                     disabled=True
                 )
 
                 c16.text_input(
                     "Estatus entrega Estado / CLUES",
-                    datos_orden.get("estatus_entrega_estado", ""),
+                    estatus_entrega_estado,
                     disabled=True
                 )
 
                 st.text_input(
                     "Incidencia automática",
-                    datos_orden.get("estatus_completa", ""),
+                    estatus_completa,
                     disabled=True
                 )
 
@@ -5327,8 +5327,128 @@ elif menu == "Seguimiento":
 
         st.divider()
 
+        st.divider()
+
+        st.markdown(
+            "### 📎 Subir cédula de rechazo a incidencia ya capturada"
+        )
+
+        st.caption(
+            "Selecciona una incidencia registrada y adjunta el PDF. El link se guardará en la columna PDF_CEDULA_RECHAZO."
+        )
+
+        if "ID" not in df_seg.columns:
+
+            st.warning(
+                "No encontré la columna ID para actualizar evidencias."
+            )
+
+        else:
+
+            df_cedulas = df_seg.copy()
+
+            if "PDF_CEDULA_RECHAZO" in df_cedulas.columns:
+
+                solo_sin_cedula = st.checkbox(
+                    "Mostrar solo incidencias sin cédula de rechazo",
+                    value=True
+                )
+
+                if solo_sin_cedula:
+
+                    df_cedulas = df_cedulas[
+                        df_cedulas["PDF_CEDULA_RECHAZO"]
+                        .astype(str)
+                        .str.strip()
+                        .replace(
+                            {
+                                "nan": "",
+                                "None": "",
+                                "none": "",
+                                "NULL": "",
+                                "null": ""
+                            }
+                        )
+                        .eq("")
+                    ].copy()
+
+            if df_cedulas.empty:
+
+                st.info(
+                    "No hay incidencias pendientes de cédula con los filtros actuales."
+                )
+
+            else:
+
+                df_cedulas["_OPCION_CEDULA"] = df_cedulas.apply(
+                    lambda x: f"ID {x.get('ID', '')} | OS {x.get('ORDEN', x.get('ORDEN_BUSCADA', ''))} | {x.get('ENTIDAD', '')} | {x.get('CLAVE_CNIS', '')} | {x.get('TIPO_INCIDENCIA', '')}",
+                    axis=1
+                )
+
+                opcion_cedula = st.selectbox(
+                    "Incidencia a actualizar",
+                    df_cedulas["_OPCION_CEDULA"].astype(str).tolist(),
+                    key="select_cedula_rechazo"
+                )
+
+                fila_cedula = df_cedulas[
+                    df_cedulas["_OPCION_CEDULA"].astype(str) == str(opcion_cedula)
+                ].iloc[0]
+
+                archivo_cedula = st.file_uploader(
+                    "Cédula de rechazo en PDF",
+                    type=[
+                        "pdf"
+                    ],
+                    key="cedula_rechazo_incidencia_previa"
+                )
+
+                if st.button(
+                    "📎 Subir cédula de rechazo",
+                    use_container_width=True
+                ):
+
+                    if archivo_cedula is None:
+
+                        st.error(
+                            "Primero selecciona un archivo PDF."
+                        )
+
+                    else:
+
+                        ok = actualizar_evidencia_incidencia(
+                            fila_cedula.get("ID", ""),
+                            archivo_cedula,
+                            "cedula",
+                            fila_cedula.get("ORDEN", fila_cedula.get("ORDEN_BUSCADA", "")),
+                            fila_cedula.get("ENTIDAD", "SIN_ESTADO"),
+                            fila_cedula.get("CLUES_DESTINO", "SIN_CLUES")
+                        )
+
+                        if ok:
+
+                            st.success(
+                                "Cédula de rechazo agregada correctamente a la incidencia."
+                            )
+
+                            try:
+
+                                generar_respaldo_drive()
+
+                            except Exception:
+
+                                pass
+
+                            st.rerun()
+
+                        else:
+
+                            st.error(
+                                "No se pudo subir la cédula. Revisa el archivo PDF o las credenciales de Drive."
+                            )
+
         with st.expander(
-            "📎 Agregar archivo a una incidencia previa"
+            "📎 Agregar otro archivo a una incidencia previa"
         ):
 
             if "ID" not in df_seg.columns:
@@ -5348,7 +5468,8 @@ elif menu == "Seguimiento":
 
                 opcion_archivo = st.selectbox(
                     "Incidencia a actualizar",
-                    df_archivos["_OPCION_ARCHIVO"].astype(str).tolist()
+                    df_archivos["_OPCION_ARCHIVO"].astype(str).tolist(),
+                    key="select_otro_archivo"
                 )
 
                 fila_archivo = df_archivos[
@@ -5360,7 +5481,8 @@ elif menu == "Seguimiento":
                     [
                         "Cédula rechazo",
                         "Correo seguimiento"
-                    ]
+                    ],
+                    key="tipo_otro_archivo"
                 )
 
                 archivo_nuevo = st.file_uploader(
