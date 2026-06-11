@@ -3434,9 +3434,32 @@ def generar_reporte_ejecutivo_pdf(incidencias):
 
             df[columna] = ""
 
+    # Corrección: el resumen ejecutivo debe tomar el día conforme al horario
+    # de México, no conforme al día UTC ni al formato original de Supabase.
+    # Esto evita que las capturas hechas por la tarde/noche queden fuera del
+    # apartado "Resumen del día" por diferencia de zona horaria.
     df["FECHA_REGISTRO_DT"] = pd.to_datetime(
         df["FECHA_REGISTRO"],
-        errors="coerce"
+        errors="coerce",
+        utc=True
+    )
+
+    # Si algún registro antiguo no trae FECHA_REGISTRO, intenta usar CREADO_EN.
+    if "CREADO_EN" in df.columns:
+
+        fechas_creado_en = pd.to_datetime(
+            df["CREADO_EN"],
+            errors="coerce",
+            utc=True
+        )
+
+        df["FECHA_REGISTRO_DT"] = df["FECHA_REGISTRO_DT"].fillna(
+            fechas_creado_en
+        )
+
+    df["FECHA_REGISTRO_MX"] = (
+        df["FECHA_REGISTRO_DT"]
+        .dt.tz_convert("America/Mexico_City")
     )
 
     df["MONITORA"] = df["RESPONSABLE"].apply(
@@ -3444,7 +3467,7 @@ def generar_reporte_ejecutivo_pdf(incidencias):
     )
 
     df_hoy = df[
-        df["FECHA_REGISTRO_DT"].dt.strftime("%Y-%m-%d") == hoy
+        df["FECHA_REGISTRO_MX"].dt.strftime("%Y-%m-%d") == hoy
     ].copy()
 
     total_hoy = len(df_hoy)
