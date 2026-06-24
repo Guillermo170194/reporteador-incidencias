@@ -3386,6 +3386,21 @@ def generar_reporte_ejecutivo_pdf(incidencias):
 
     hoy = fecha_hoy_sistema()
 
+    # Fecha base del reporte para filtros del mes actual.
+    # Se define aquí para que esté disponible en todo el PDF.
+    hoy_dt = pd.to_datetime(
+        hoy,
+        errors="coerce"
+    )
+
+    if pd.isna(
+        hoy_dt
+    ):
+
+        hoy_dt = pd.Timestamp.now(
+            tz="America/Mexico_City"
+        )
+
     elementos.append(
         Paragraph(
             f"Fecha del reporte: {hoy}",
