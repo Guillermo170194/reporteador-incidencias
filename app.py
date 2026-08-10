@@ -2344,6 +2344,42 @@ def convertir_excel(
 
 
 
+def convertir_excel_cedulas_rechazo(df):
+    """Genera un Excel independiente con hipervínculos clicables a las cédulas."""
+    salida = BytesIO()
+    exportar = df.copy()
+
+    if "PDF_CEDULA_RECHAZO" in exportar.columns:
+        exportar = exportar.rename(columns={"PDF_CEDULA_RECHAZO": "ABRIR PDF"})
+
+    with pd.ExcelWriter(salida, engine="openpyxl") as writer:
+        exportar.to_excel(writer, index=False, sheet_name="Cedulas de rechazo")
+        ws = writer.sheets["Cedulas de rechazo"]
+
+        encabezados = {celda.value: celda.column for celda in ws[1]}
+        col_pdf = encabezados.get("ABRIR PDF")
+
+        if col_pdf:
+            for fila in range(2, ws.max_row + 1):
+                celda = ws.cell(row=fila, column=col_pdf)
+                url = str(celda.value or "").strip()
+                if url and url.lower() not in {"nan", "none", "null"}:
+                    celda.value = "Ver PDF"
+                    celda.hyperlink = url
+                    celda.style = "Hyperlink"
+
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+
+        for columna in ws.columns:
+            letra = columna[0].column_letter
+            ancho = min(max(len(str(c.value or "")) for c in columna) + 2, 45)
+            ws.column_dimensions[letra].width = max(ancho, 12)
+
+    salida.seek(0)
+    return salida
+
+
 
 
 def buscar_google_sheet_maestro():
@@ -3773,6 +3809,7 @@ menu = st.sidebar.radio(
         "Registrar incidencia",
         "Resumen Ejecutivo",
         "Seguimiento",
+        "Cédulas de rechazo",
         "Base Supabase"
     ]
 )
@@ -5413,6 +5450,88 @@ elif menu == "Seguimiento":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
+
+# =========================
+# CÉDULAS DE RECHAZO
+# =========================
+
+elif menu == "Cédulas de rechazo":
+
+    st.subheader("📄 Cédulas de rechazo")
+    st.caption("Consulta las cédulas registradas, abre cada PDF con un clic o descarga el concentrado en Excel.")
+
+    df_cedulas = incidencias.copy()
+
+    if "PDF_CEDULA_RECHAZO" not in df_cedulas.columns:
+        st.info("Aún no existe información de cédulas de rechazo en la base.")
+    else:
+        enlaces = (
+            df_cedulas["PDF_CEDULA_RECHAZO"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+        df_cedulas = df_cedulas[
+            ~enlaces.str.lower().isin(["", "nan", "none", "null"])
+        ].copy()
+
+        if df_cedulas.empty:
+            st.info("No hay cédulas de rechazo registradas para mostrar.")
+        else:
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                if "ENTIDAD" in df_cedulas.columns:
+                    entidades = sorted(df_cedulas["ENTIDAD"].fillna("").astype(str).unique().tolist())
+                    entidad = st.selectbox("Entidad", ["Todas"] + [x for x in entidades if x.strip()], key="cedulas_entidad")
+                    if entidad != "Todas":
+                        df_cedulas = df_cedulas[df_cedulas["ENTIDAD"].astype(str) == entidad]
+
+            with c2:
+                if "TIPO_INCIDENCIA" in df_cedulas.columns:
+                    tipos = sorted(df_cedulas["TIPO_INCIDENCIA"].fillna("").astype(str).unique().tolist())
+                    tipo = st.selectbox("Tipo de incidencia", ["Todos"] + [x for x in tipos if x.strip()], key="cedulas_tipo")
+                    if tipo != "Todos":
+                        df_cedulas = df_cedulas[df_cedulas["TIPO_INCIDENCIA"].astype(str) == tipo]
+
+            with c3:
+                orden_buscar = st.text_input("Buscar orden", key="cedulas_orden").strip()
+                if orden_buscar:
+                    col_orden = "ORDEN" if "ORDEN" in df_cedulas.columns else "ORDEN_BUSCADA"
+                    if col_orden in df_cedulas.columns:
+                        df_cedulas = df_cedulas[df_cedulas[col_orden].fillna("").astype(str).str.contains(orden_buscar, case=False, na=False)]
+
+            st.metric("Cédulas encontradas", len(df_cedulas))
+
+            columnas = [
+                "FECHA_REGISTRO", "ENTIDAD", "ORDEN", "ORDEN_BUSCADA",
+                "CLAVE_CNIS", "PROVEEDOR", "TIPO_INCIDENCIA",
+                "ESTATUS_INCIDENCIA", "RESPONSABLE", "PDF_CEDULA_RECHAZO"
+            ]
+            columnas = [c for c in columnas if c in df_cedulas.columns]
+            vista = df_cedulas[columnas].copy()
+
+            st.dataframe(
+                vista,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "PDF_CEDULA_RECHAZO": st.column_config.LinkColumn(
+                        "📄 Abrir PDF",
+                        display_text="Ver PDF"
+                    )
+                }
+            )
+
+            excel_cedulas = convertir_excel_cedulas_rechazo(vista)
+            st.download_button(
+                "⬇️ Descargar cédulas de rechazo en Excel",
+                data=excel_cedulas,
+                file_name="cedulas_de_rechazo.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
 
 # =========================
