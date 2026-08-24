@@ -2344,6 +2344,18 @@ def convertir_excel(
 
 
 
+def es_enlace_cedula_dashboard(valor):
+    """Valida el formato webViewLink que genera Drive al subir desde el dashboard."""
+    url = str(valor or "").strip()
+    return bool(
+        re.fullmatch(
+            r"https://drive\.google\.com/file/d/[A-Za-z0-9_-]+/view(?:\?.*)?",
+            url,
+            flags=re.IGNORECASE
+        )
+    )
+
+
 def convertir_excel_cedulas_rechazo(df):
     """Genera un Excel independiente con hipervínculos clicables a las cédulas."""
     salida = BytesIO()
@@ -2363,10 +2375,12 @@ def convertir_excel_cedulas_rechazo(df):
             for fila in range(2, ws.max_row + 1):
                 celda = ws.cell(row=fila, column=col_pdf)
                 url = str(celda.value or "").strip()
-                if url and url.lower() not in {"nan", "none", "null"}:
+                if es_enlace_cedula_dashboard(url):
                     celda.value = "Ver PDF"
                     celda.hyperlink = url
                     celda.style = "Hyperlink"
+                else:
+                    celda.value = ""
 
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
@@ -5836,7 +5850,7 @@ elif menu == "Cédulas de rechazo":
             .str.strip()
         )
         df_cedulas = df_cedulas[
-            ~enlaces.str.lower().isin(["", "nan", "none", "null"])
+            enlaces.apply(es_enlace_cedula_dashboard)
         ].copy()
 
         if df_cedulas.empty:
