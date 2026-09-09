@@ -2638,12 +2638,22 @@ COLUMNAS_BASE_URGENCIAS_SIN_ORDEN = [
 def normalizar_clave_urgencia(valor):
 
     texto = limpiar_valor_visual(valor).upper().strip()
+    texto = texto.replace("\ufeff", "").replace("\u200b", "")
 
     if re.fullmatch(r"\d+\.0+", texto):
 
         texto = texto.split(".", 1)[0]
 
     return re.sub(r"\s+", "", texto)
+
+
+def compactar_clave_urgencia(valor):
+
+    return re.sub(
+        r"[^A-Z0-9]+",
+        "",
+        normalizar_clave_urgencia(valor)
+    )
 
 
 def variantes_clave_urgencia(valor):
@@ -2655,10 +2665,12 @@ def variantes_clave_urgencia(valor):
         return []
 
     normalizada = normalizar_clave_urgencia(original)
+    compacta = compactar_clave_urgencia(original)
     variantes = [
         original,
         original.replace(" ", ""),
-        normalizada
+        normalizada,
+        compacta
     ]
 
     if re.fullmatch(r"\d+", normalizada):
@@ -2668,6 +2680,12 @@ def variantes_clave_urgencia(valor):
                 f"{normalizada}.0",
                 str(int(normalizada))
             ]
+        )
+
+    elif re.fullmatch(r"\d+", compacta):
+
+        variantes.append(
+            f"{compacta}.0"
         )
 
     resultado = []
@@ -2831,39 +2849,49 @@ def consultar_compendio_por_clave_urgencia(clave):
 
     if not datos:
 
-        texto_busqueda = normalizar_clave_urgencia(
-            clave
-        )
+        textos_busqueda = [
+            normalizar_clave_urgencia(clave),
+            compactar_clave_urgencia(clave)
+        ]
 
-        if len(texto_busqueda) >= 3:
+        for columna in [
+            "clave_cnis",
+            "clave"
+        ]:
 
-            try:
+            for texto_busqueda in textos_busqueda:
 
-                respuesta = (
-                    supabase
-                    .table(
-                        "compendio"
+                if len(texto_busqueda) < 3:
+
+                    continue
+
+                try:
+
+                    respuesta = (
+                        supabase
+                        .table(
+                            "compendio"
+                        )
+                        .select(
+                            "*"
+                        )
+                        .ilike(
+                            columna,
+                            f"%{texto_busqueda}%"
+                        )
+                        .limit(
+                            1000
+                        )
+                        .execute()
                     )
-                    .select(
-                        "*"
-                    )
-                    .ilike(
-                        "clave_cnis",
-                        f"%{texto_busqueda}%"
-                    )
-                    .limit(
-                        1000
-                    )
-                    .execute()
-                )
 
-                datos.extend(
-                    respuesta.data or []
-                )
+                    datos.extend(
+                        respuesta.data or []
+                    )
 
-            except Exception:
+                except Exception:
 
-                pass
+                    continue
 
     if not datos:
 
@@ -7304,8 +7332,8 @@ elif menu == "Urgencias":
         ):
 
             st.error(
-                "La clave capturada no existe en el compendio. "
-                "No se puede registrar la urgencia."
+                "La clave no fue localizada en la base consultada. "
+                "Verifica el formato de la clave o la sincronización del compendio."
             )
 
         elif not resultado_urgencia.get(
@@ -7314,14 +7342,14 @@ elif menu == "Urgencias":
         ):
 
             st.error(
-                "La clave existe en el compendio, pero el estado capturado "
-                "no coincide con una entidad homologada."
+                "La clave existe en el compendio, pero no tiene registros "
+                "para la entidad seleccionada."
             )
 
         else:
 
             st.success(
-                "Estado homologado desde el compendio: "
+                "Entidad localizada en el compendio: "
                 f"{resultado_urgencia['entidad_homologada']}"
             )
 
@@ -7590,11 +7618,13 @@ elif menu == "Urgencias":
 
             if not resultado_masivo.get("clave_valida", False):
 
-                estatus_masivo = "CLAVE NO EXISTE EN COMPENDIO"
+                estatus_masivo = "CLAVE NO LOCALIZADA EN LA BASE DEL SISTEMA"
 
             elif not resultado_masivo.get("entidad_homologada", ""):
 
-                estatus_masivo = "ENTIDAD NO HOMOLOGADA"
+                estatus_masivo = (
+                    "CLAVE SIN REGISTRO PARA LA ENTIDAD SELECCIONADA"
+                )
 
             elif not ordenes_masivas.empty:
 
@@ -7620,7 +7650,7 @@ elif menu == "Urgencias":
                     "ORDENES_EXCLUIDAS_ENTREGADAS": len(
                         ordenes_entregadas_masivas
                     ),
-                    "ENTIDAD_HOMOLOGADA": resultado_masivo.get(
+                    "ENTIDAD_EN_COMPENDIO": resultado_masivo.get(
                         "entidad_homologada",
                         ""
                     )
@@ -7661,7 +7691,7 @@ elif menu == "Urgencias":
                     if not resultado_masivo.get("clave_valida", False):
 
                         errores_masivos.append(
-                            f"{clave_masiva}: no existe en el compendio"
+                            f"{clave_masiva}: no localizada en la base del sistema"
                         )
                         continue
 
@@ -7673,7 +7703,7 @@ elif menu == "Urgencias":
                     if not entidad_masiva:
 
                         errores_masivos.append(
-                            f"{clave_masiva}: entidad no homologada"
+                            f"{clave_masiva}: sin registro para la entidad seleccionada"
                         )
                         continue
 
