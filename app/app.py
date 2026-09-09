@@ -2920,9 +2920,16 @@ def obtener_entidades_compendio_urgencia():
 
     for fila in datos:
 
+        fila_serie = pd.Series(
+            fila
+        ) if isinstance(
+            fila,
+            dict
+        ) else fila
+
         entidad = limpiar_valor_visual(
             obtener_valor(
-                fila,
+                fila_serie,
                 columnas
             )
         )
