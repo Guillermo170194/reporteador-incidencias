@@ -2876,6 +2876,71 @@ def consultar_compendio_por_clave_urgencia(clave):
     )
 
 
+@st.cache_data(
+    ttl=600,
+    show_spinner=False
+)
+def obtener_entidades_compendio_urgencia():
+
+    try:
+
+        respuesta = (
+            supabase
+            .table(
+                "compendio"
+            )
+            .select(
+                "*"
+            )
+            .limit(
+                10000
+            )
+            .execute()
+        )
+
+    except Exception:
+
+        return []
+
+    datos = respuesta.data or []
+
+    if not datos:
+
+        return []
+
+    entidades = {}
+    columnas = [
+        "entidad",
+        "ENTIDAD",
+        "estado",
+        "ESTADO",
+        "entidad_destino",
+        "Entidad de destino"
+    ]
+
+    for fila in datos:
+
+        entidad = limpiar_valor_visual(
+            obtener_valor(
+                fila,
+                columnas
+            )
+        )
+
+        clave_entidad = normalizar_entidad_urgencia(
+            entidad
+        )
+
+        if entidad and clave_entidad and clave_entidad not in entidades:
+
+            entidades[clave_entidad] = entidad
+
+    return sorted(
+        entidades.values(),
+        key=lambda valor: normalizar_entidad_urgencia(valor)
+    )
+
+
 def valor_fila_urgencia(fila, opciones):
 
     return obtener_valor(
@@ -5004,6 +5069,40 @@ def extraer_ordenes_masivas(
     return ordenes
 
 
+def extraer_claves_urgencia_masivas(
+    texto
+):
+
+    claves = []
+
+    for linea in str(texto).splitlines():
+
+        linea = linea.strip()
+
+        if not linea:
+
+            continue
+
+        partes = re.split(
+            r"[,;\t]+",
+            linea
+        )
+
+        for parte in partes:
+
+            clave = normalizar_clave_urgencia(
+                parte
+            )
+
+            if clave and clave not in claves:
+
+                claves.append(
+                    clave
+                )
+
+    return claves
+
+
 
 
 # =========================
@@ -7080,11 +7179,21 @@ elif menu == "Urgencias":
 
     with c2:
 
-        entidad_urgencia = st.text_input(
+        entidades_urgencia = obtener_entidades_compendio_urgencia()
+
+        opciones_entidades_urgencia = [
+            "Selecciona una entidad"
+        ] + entidades_urgencia
+
+        entidad_urgencia = st.selectbox(
             "Estado / entidad",
-            placeholder="Ejemplo: Veracruz",
+            opciones_entidades_urgencia,
             key="urgencias_entidad"
-        ).strip()
+        )
+
+        if entidad_urgencia == "Selecciona una entidad":
+
+            entidad_urgencia = ""
 
     with c3:
 
@@ -7389,6 +7498,259 @@ elif menu == "Urgencias":
                     "resultado_urgencias",
                     None
                 )
+
+    st.divider()
+
+    st.subheader(
+        "📋 Carga masiva de claves"
+    )
+
+    st.caption(
+        "Pega una clave por línea o varias separadas por coma, punto y coma "
+        "o tabulador. Todas se validarán contra el compendio."
+    )
+
+    texto_claves_urgencias = st.text_area(
+        "Claves CNIS para carga masiva",
+        height=180,
+        placeholder="010.000.0012.00\n010.000.0045.00\n010.000.0099.00",
+        key="urgencias_claves_masivas"
+    )
+
+    claves_urgencias_masivas = extraer_claves_urgencia_masivas(
+        texto_claves_urgencias
+    )
+
+    st.caption(
+        f"Claves detectadas: {len(claves_urgencias_masivas)}"
+    )
+
+    consultar_masivo_urgencias = st.button(
+        "🔎 Validar claves masivas",
+        use_container_width=True,
+        key="urgencias_validar_masivo"
+    )
+
+    if consultar_masivo_urgencias:
+
+        if not claves_urgencias_masivas:
+
+            st.warning(
+                "Pega al menos una clave para realizar la validación."
+            )
+
+        elif not entidad_urgencia:
+
+            st.warning(
+                "Selecciona una entidad antes de validar las claves."
+            )
+
+        else:
+
+            resultados_masivos = []
+
+            with st.spinner(
+                "Validando claves contra el compendio y revisando entregas..."
+            ):
+
+                for clave_masiva in claves_urgencias_masivas:
+
+                    resultado_masivo = buscar_ordenes_urgencia(
+                        clave_masiva,
+                        entidad_urgencia
+                    )
+
+                    resultados_masivos.append(
+                        {
+                            "clave": clave_masiva,
+                            "resultado": resultado_masivo
+                        }
+                    )
+
+            st.session_state[
+                "resultados_urgencias_masivas"
+            ] = {
+                "entidad": normalizar_entidad_urgencia(
+                    entidad_urgencia
+                ),
+                "fecha": fecha_urgencia_iso(
+                    fecha_urgencia
+                ),
+                "resultados": resultados_masivos
+            }
+
+    resultados_masivos_guardados = st.session_state.get(
+        "resultados_urgencias_masivas"
+    )
+
+    consulta_masiva_actual = (
+        resultados_masivos_guardados
+        and resultados_masivos_guardados.get("entidad") == normalizar_entidad_urgencia(
+            entidad_urgencia
+        )
+        and resultados_masivos_guardados.get("fecha") == fecha_urgencia_iso(
+            fecha_urgencia
+        )
+        and resultados_masivos_guardados.get("resultados")
+    )
+
+    if consulta_masiva_actual:
+
+        resumen_masivo = []
+
+        for item_masivo in resultados_masivos_guardados["resultados"]:
+
+            resultado_masivo = item_masivo["resultado"]
+            ordenes_masivas = resultado_masivo.get(
+                "ordenes",
+                pd.DataFrame()
+            )
+            ordenes_entregadas_masivas = resultado_masivo.get(
+                "ordenes_entregadas",
+                pd.DataFrame()
+            )
+
+            if not resultado_masivo.get("clave_valida", False):
+
+                estatus_masivo = "CLAVE NO EXISTE EN COMPENDIO"
+
+            elif not resultado_masivo.get("entidad_homologada", ""):
+
+                estatus_masivo = "ENTIDAD NO HOMOLOGADA"
+
+            elif not ordenes_masivas.empty:
+
+                estatus_masivo = "LISTA PARA REGISTRAR"
+
+            elif resultado_masivo.get("sin_orden", False):
+
+                estatus_masivo = "SIN ORDEN"
+
+            elif not ordenes_entregadas_masivas.empty:
+
+                estatus_masivo = "TODAS ENTREGADAS"
+
+            else:
+
+                estatus_masivo = "SIN RESULTADO"
+
+            resumen_masivo.append(
+                {
+                    "CLAVE_CNIS": item_masivo["clave"],
+                    "ESTATUS": estatus_masivo,
+                    "ORDENES_NO_ENTREGADAS": len(ordenes_masivas),
+                    "ORDENES_EXCLUIDAS_ENTREGADAS": len(
+                        ordenes_entregadas_masivas
+                    ),
+                    "ENTIDAD_HOMOLOGADA": resultado_masivo.get(
+                        "entidad_homologada",
+                        ""
+                    )
+                }
+            )
+
+        st.subheader(
+            "Resultado de validación masiva"
+        )
+
+        dataframe_limpio(
+            pd.DataFrame(
+                resumen_masivo
+            )
+        )
+
+        guardar_masivo_urgencias = st.button(
+            "💾 Registrar todas las urgencias válidas",
+            use_container_width=True,
+            key="urgencias_guardar_masivo"
+        )
+
+        if guardar_masivo_urgencias:
+
+            total_guardadas_masivo = 0
+            total_duplicadas_masivo = 0
+            errores_masivos = []
+
+            with st.spinner(
+                "Registrando las urgencias válidas..."
+            ):
+
+                for item_masivo in resultados_masivos_guardados["resultados"]:
+
+                    clave_masiva = item_masivo["clave"]
+                    resultado_masivo = item_masivo["resultado"]
+
+                    if not resultado_masivo.get("clave_valida", False):
+
+                        errores_masivos.append(
+                            f"{clave_masiva}: no existe en el compendio"
+                        )
+                        continue
+
+                    entidad_masiva = resultado_masivo.get(
+                        "entidad_homologada",
+                        ""
+                    )
+
+                    if not entidad_masiva:
+
+                        errores_masivos.append(
+                            f"{clave_masiva}: entidad no homologada"
+                        )
+                        continue
+
+                    resultado_registro_masivo = registrar_urgencia_completa(
+                        clave_masiva,
+                        entidad_masiva,
+                        fecha_urgencia,
+                        responsable_urgencia,
+                        observaciones_urgencia_captura,
+                        resultado_masivo,
+                        incidencias,
+                        pdf_urgencia
+                    )
+
+                    total_guardadas_masivo += resultado_registro_masivo.get(
+                        "guardadas",
+                        0
+                    )
+                    total_duplicadas_masivo += resultado_registro_masivo.get(
+                        "duplicadas",
+                        0
+                    )
+                    errores_masivos.extend(
+                        resultado_registro_masivo.get(
+                            "errores",
+                            []
+                        )
+                    )
+
+            if total_guardadas_masivo:
+
+                st.success(
+                    f"Se registraron {total_guardadas_masivo} urgencias correctamente."
+                )
+
+            if total_duplicadas_masivo:
+
+                st.info(
+                    f"Se omitieron {total_duplicadas_masivo} registros duplicados."
+                )
+
+            if errores_masivos:
+
+                st.warning(
+                    "Algunas claves no se registraron:"
+                )
+                st.write(
+                    errores_masivos
+                )
+
+            st.cache_data.clear()
+            st.session_state.pop(
+                "resultados_urgencias_masivas",
+                None
+            )
 
 
 # =========================
