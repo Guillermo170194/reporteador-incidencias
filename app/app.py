@@ -2876,76 +2876,47 @@ def consultar_compendio_por_clave_urgencia(clave):
     )
 
 
-@st.cache_data(
-    ttl=600,
-    show_spinner=False
-)
+ENTIDADES_URGENCIA = [
+    "AGUASCALIENTES",
+    "BAJA CALIFORNIA",
+    "BAJA CALIFORNIA SUR",
+    "CAMPECHE",
+    "CHIAPAS",
+    "CHIHUAHUA",
+    "CIUDAD DE MEXICO",
+    "COAHUILA DE ZARAGOZA",
+    "COLIMA",
+    "DURANGO",
+    "GUANAJUATO",
+    "GUERRERO",
+    "HIDALGO",
+    "JALISCO",
+    "MEXICO",
+    "MICHOACAN DE OCAMPO",
+    "MORELOS",
+    "NAYARIT",
+    "NUEVO LEON",
+    "OAXACA",
+    "PUEBLA",
+    "QUERETARO DE ARTEAGA",
+    "QUINTANA ROO",
+    "SAN LUIS POTOSI",
+    "SINALOA",
+    "SONORA",
+    "TABASCO",
+    "TAMAULIPAS",
+    "TLAXCALA",
+    "VERACRUZ",
+    "YUCATAN",
+    "ZACATECAS"
+]
+
+
 def obtener_entidades_compendio_urgencia():
 
-    try:
-
-        respuesta = (
-            supabase
-            .table(
-                "compendio"
-            )
-            .select(
-                "*"
-            )
-            .limit(
-                10000
-            )
-            .execute()
-        )
-
-    except Exception:
-
-        return []
-
-    datos = respuesta.data or []
-
-    if not datos:
-
-        return []
-
-    entidades = {}
-    columnas = [
-        "entidad",
-        "ENTIDAD",
-        "estado",
-        "ESTADO",
-        "entidad_destino",
-        "Entidad de destino"
-    ]
-
-    for fila in datos:
-
-        fila_serie = pd.Series(
-            fila
-        ) if isinstance(
-            fila,
-            dict
-        ) else fila
-
-        entidad = limpiar_valor_visual(
-            obtener_valor(
-                fila_serie,
-                columnas
-            )
-        )
-
-        clave_entidad = normalizar_entidad_urgencia(
-            entidad
-        )
-
-        if entidad and clave_entidad and clave_entidad not in entidades:
-
-            entidades[clave_entidad] = entidad
-
-    return sorted(
-        entidades.values(),
-        key=lambda valor: normalizar_entidad_urgencia(valor)
-    )
+    # El catálogo de captura debe ser estable y no depender de los primeros
+    # registros devueltos por la tabla compendio de Supabase.
+    return ENTIDADES_URGENCIA.copy()
 
 
 def valor_fila_urgencia(fila, opciones):
