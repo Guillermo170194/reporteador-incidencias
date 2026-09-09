@@ -6,6 +6,7 @@ import re
 import os
 import json
 import tempfile
+import unicodedata
 
 from dotenv import load_dotenv
 
@@ -70,6 +71,20 @@ NOMBRE_CARPETA_RESPALDOS = (
 
 NOMBRE_GOOGLE_SHEET_INCIDENCIAS = (
     "BASE_INCIDENCIAS_SUPABASE"
+)
+
+# Libro maestro independiente para el módulo de urgencias.
+# Se crea dentro de la misma carpeta de Drive de incidencias.
+NOMBRE_GOOGLE_SHEET_URGENCIAS = (
+    "BASE_URGENCIAS"
+)
+
+NOMBRE_HOJA_URGENCIAS_ORDENES = (
+    "Ordenes_Urgencias"
+)
+
+NOMBRE_HOJA_URGENCIAS_SIN_ORDEN = (
+    "Sin_Orden_Urgencias"
 )
 
 
@@ -592,6 +607,7 @@ TIPOS_INCIDENCIA_GENERAL = [
     "ORDENES CANCELADAS",
     "RECHAZO POR CAPACIDAD DEL ALMACÉN",
     "RECHAZO INJUSTIFICADO",
+    "URGENCIA",
     "OTRO. ESPECIFICAR EN OBSERVACIONES"
 ]
 
@@ -2031,7 +2047,7 @@ def guardar_incidencia(
         "pdf_correo_seguimiento": preparar_valor_supabase(nueva.get("PDF_CORREO_SEGUIMIENTO", ""))
     }
 
-    (
+    respuesta = (
         supabase
         .table(
             "incidencias"
@@ -2045,6 +2061,24 @@ def guardar_incidencia(
     # Limpia el cache inmediatamente después de guardar para que
     # Resumen Ejecutivo, Seguimiento y Google Sheets lean datos nuevos.
     st.cache_data.clear()
+
+    datos_insertados = getattr(
+        respuesta,
+        "data",
+        None
+    ) or []
+
+    if datos_insertados and isinstance(
+        datos_insertados[0],
+        dict
+    ):
+
+        return datos_insertados[0].get(
+            "id",
+            ""
+        )
+
+    return ""
 
 
 # =========================
@@ -2344,18 +2378,6 @@ def convertir_excel(
 
 
 
-def es_enlace_cedula_dashboard(valor):
-    """Valida el formato webViewLink que genera Drive al subir desde el dashboard."""
-    url = str(valor or "").strip()
-    return bool(
-        re.fullmatch(
-            r"https://drive\.google\.com/file/d/[A-Za-z0-9_-]+/view(?:\?.*)?",
-            url,
-            flags=re.IGNORECASE
-        )
-    )
-
-
 def convertir_excel_cedulas_rechazo(df):
     """Genera un Excel independiente con hipervínculos clicables a las cédulas."""
     salida = BytesIO()
@@ -2375,12 +2397,10 @@ def convertir_excel_cedulas_rechazo(df):
             for fila in range(2, ws.max_row + 1):
                 celda = ws.cell(row=fila, column=col_pdf)
                 url = str(celda.value or "").strip()
-                if es_enlace_cedula_dashboard(url):
+                if url and url.lower() not in {"nan", "none", "null"}:
                     celda.value = "Ver PDF"
                     celda.hyperlink = url
                     celda.style = "Hyperlink"
-                else:
-                    celda.value = ""
 
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
@@ -2564,6 +2584,1392 @@ def generar_respaldo_drive():
         )
 
         return ""
+
+
+# =========================
+# URGENCIAS: CRUCE DE CLAVES Y ÓRDENES
+# =========================
+
+COLUMNAS_BASE_URGENCIAS_ORDENES = [
+    "FECHA_URGENCIA",
+    "SOLICITUD",
+    "CLAVE_CNIS",
+    "ENTIDAD",
+    "ENTIDAD_COMPENDIO",
+    "ORDEN_SUMINISTRO",
+    "ESTATUS_BASE",
+    "TIPO_ENTREGA",
+    "CLUES_DESTINO",
+    "UNIDAD_DESTINO",
+    "ALMACEN",
+    "PROVEEDOR",
+    "DESCRIPCION",
+    "PIEZAS_EMITIDAS",
+    "PIEZAS_ENTREGADAS_CLUES",
+    "PENDIENTE_ENTREGA",
+    "ESTATUS_ENTREGA_ENTIDAD",
+    "TIPO_RED",
+    "GRUPO_TERAPEUTICO",
+    "OPERADOR_LOGISTICO",
+    "ORIGEN_COMPENDIO",
+    "RESPONSABLE",
+    "FECHA_REGISTRO",
+    "ID_INCIDENCIA",
+    "OBSERVACIONES",
+    "FECHA_ACTUALIZACION_BASE"
+]
+
+COLUMNAS_BASE_URGENCIAS_SIN_ORDEN = [
+    "FECHA_URGENCIA",
+    "SOLICITUD",
+    "CLAVE_CNIS",
+    "ENTIDAD",
+    "RESPONSABLE",
+    "FECHA_REGISTRO",
+    "ID_INCIDENCIA",
+    "MOTIVO",
+    "OBSERVACIONES",
+    "FECHA_ACTUALIZACION_BASE"
+]
+
+
+def normalizar_clave_urgencia(valor):
+
+    texto = limpiar_valor_visual(valor).upper().strip()
+
+    if re.fullmatch(r"\d+\.0+", texto):
+
+        texto = texto.split(".", 1)[0]
+
+    return re.sub(r"\s+", "", texto)
+
+
+def variantes_clave_urgencia(valor):
+
+    original = limpiar_valor_visual(valor).strip()
+
+    if not original:
+
+        return []
+
+    normalizada = normalizar_clave_urgencia(original)
+    variantes = [
+        original,
+        original.replace(" ", ""),
+        normalizada
+    ]
+
+    if re.fullmatch(r"\d+", normalizada):
+
+        variantes.extend(
+            [
+                f"{normalizada}.0",
+                str(int(normalizada))
+            ]
+        )
+
+    resultado = []
+
+    for variante in variantes:
+
+        variante = str(variante).strip()
+
+        if variante and variante not in resultado:
+
+            resultado.append(variante)
+
+    return resultado
+
+
+def normalizar_entidad_urgencia(valor):
+
+    texto = limpiar_valor_visual(valor).upper().strip()
+
+    texto = unicodedata.normalize(
+        "NFKD",
+        texto
+    ).encode(
+        "ascii",
+        "ignore"
+    ).decode(
+        "ascii"
+    )
+
+    texto = re.sub(
+        r"[^A-Z0-9]+",
+        " ",
+        texto
+    )
+
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto
+    ).strip()
+
+    equivalencias = {
+        "MEXICO": "ESTADO DE MEXICO",
+        "ESTADO DE MEXICO": "ESTADO DE MEXICO",
+        "EDOMEX": "ESTADO DE MEXICO",
+        "CDMX": "CIUDAD DE MEXICO",
+        "CIUDAD DE MEXICO": "CIUDAD DE MEXICO",
+        "DISTRITO FEDERAL": "CIUDAD DE MEXICO",
+        "VERACRUZ": "VERACRUZ",
+        "VERACRUZ DE IGNACIO DE LA LLAVE": "VERACRUZ",
+        "MICHOACAN DE OCAMPO": "MICHOACAN",
+        "MICHOACAN": "MICHOACAN",
+        "QUERETARO DE ARTEAGA": "QUERETARO",
+        "QUERETARO": "QUERETARO",
+        "COAHUILA DE ZARAGOZA": "COAHUILA",
+        "COAHUILA": "COAHUILA"
+    }
+
+    return equivalencias.get(
+        texto,
+        texto
+    )
+
+
+def entidades_urgencia_coinciden(valor_a, valor_b):
+
+    entidad_a = normalizar_entidad_urgencia(valor_a)
+    entidad_b = normalizar_entidad_urgencia(valor_b)
+
+    if not entidad_a or not entidad_b:
+
+        return False
+
+    if entidad_a == entidad_b:
+
+        return True
+
+    return (
+        entidad_a in entidad_b
+        or entidad_b in entidad_a
+    )
+
+
+def consultar_compendio_por_clave_urgencia(clave):
+
+    variantes = variantes_clave_urgencia(clave)
+
+    if not variantes:
+
+        return pd.DataFrame()
+
+    datos = []
+
+    # La columna oficial es clave_cnis; clave sólo se usa como respaldo
+    # para instalaciones que conservaron el encabezado anterior.
+    for columna in [
+        "clave_cnis",
+        "clave"
+    ]:
+
+        for variante in variantes:
+
+            try:
+
+                respuesta = (
+                    supabase
+                    .table(
+                        "compendio"
+                    )
+                    .select(
+                        "*"
+                    )
+                    .eq(
+                        columna,
+                        variante
+                    )
+                    .limit(
+                        1000
+                    )
+                    .execute()
+                )
+
+                datos.extend(
+                    respuesta.data or []
+                )
+
+            except Exception:
+
+                # Una columna alternativa puede no existir en el proyecto.
+                continue
+
+    if not datos:
+
+        texto_busqueda = normalizar_clave_urgencia(
+            clave
+        )
+
+        if len(texto_busqueda) >= 3:
+
+            try:
+
+                respuesta = (
+                    supabase
+                    .table(
+                        "compendio"
+                    )
+                    .select(
+                        "*"
+                    )
+                    .ilike(
+                        "clave_cnis",
+                        f"%{texto_busqueda}%"
+                    )
+                    .limit(
+                        1000
+                    )
+                    .execute()
+                )
+
+                datos.extend(
+                    respuesta.data or []
+                )
+
+            except Exception:
+
+                pass
+
+    if not datos:
+
+        return pd.DataFrame()
+
+    return pd.DataFrame(
+        datos
+    ).drop_duplicates(
+        ignore_index=True
+    )
+
+
+def valor_fila_urgencia(fila, opciones):
+
+    return obtener_valor(
+        fila,
+        opciones
+    )
+
+
+def columnas_orden_urgencia():
+
+    return {
+        "clave": [
+            "clave_cnis",
+            "CLAVE_CNIS",
+            "clave",
+            "CLAVE"
+        ],
+        "entidad": [
+            "entidad",
+            "ENTIDAD",
+            "estado",
+            "ESTADO",
+            "entidad_destino",
+            "Entidad de destino"
+        ],
+        "orden": [
+            "orden_suministro",
+            "ORDEN_SUMINISTRO",
+            "orden",
+            "ORDEN",
+            "no_orden",
+            "NO_ORDEN"
+        ],
+        "estatus_base": [
+            "estatus_base",
+            "ESTATUS_BASE",
+            "estatus",
+            "ESTATUS"
+        ],
+        "tipo_entrega": [
+            "tipo_entrega",
+            "TIPO_ENTREGA"
+        ],
+        "clues": [
+            "clues_destino",
+            "CLUES_DESTINO",
+            "clues de destino",
+            "CLUES de destino",
+            "clues destino",
+            "CLUES destino",
+            "clues",
+            "CLUES"
+        ],
+        "unidad": [
+            "unidad_destino",
+            "UNIDAD_DESTINO",
+            "unidad",
+            "UNIDAD"
+        ],
+        "almacen": [
+            "almacen",
+            "ALMACEN",
+            "almacén",
+            "ALMACÉN"
+        ],
+        "proveedor": [
+            "proveedor",
+            "PROVEEDOR"
+        ],
+        "descripcion": [
+            "descripcion",
+            "DESCRIPCION",
+            "descripción",
+            "DESCRIPCIÓN"
+        ],
+        "piezas_emitidas": [
+            "piezas_emitidas",
+            "PIEZAS_EMITIDAS",
+            "piezas emitidas",
+            "Piezas emitidas"
+        ],
+        "piezas_recibidas_ol": [
+            "piezas_recibidas_ol",
+            "PIEZAS_RECIBIDAS_OL"
+        ],
+        "piezas_entregadas": [
+            "piezas_entregadas_clues",
+            "PIEZAS_ENTREGADAS_CLUES",
+            "piezas entregadas clues",
+            "Piezas entregadas CLUES"
+        ],
+        "tipo_red": [
+            "tipo_red",
+            "TIPO_RED"
+        ],
+        "grupo": [
+            "grupo_terapeutico",
+            "GRUPO_TERAPEUTICO"
+        ],
+        "operador": [
+            "operador_logistico",
+            "OPERADOR_LOGISTICO"
+        ],
+        "origen_compendio": [
+            "origen_compendio",
+            "ORIGEN_COMPENDIO"
+        ],
+        "estatus_entrega": [
+            "estatus_entrega_estado",
+            "estatus_entrega_clues",
+            "estatus_entrega",
+            "ESTATUS_ENTREGA_ESTADO"
+        ]
+    }
+
+
+def fila_urgencia_tiene_entrega(fila):
+
+    columnas = columnas_orden_urgencia()
+
+    piezas_entregadas = convertir_numero(
+        valor_fila_urgencia(
+            fila,
+            columnas["piezas_entregadas"]
+        )
+    )
+
+    if piezas_entregadas > 0:
+
+        return True
+
+    estatus = limpiar_valor_visual(
+        valor_fila_urgencia(
+            fila,
+            columnas["estatus_entrega"]
+        )
+    ).upper()
+
+    if not estatus:
+
+        return False
+
+    if any(
+        palabra in estatus
+        for palabra in [
+            "NO ENTREG",
+            "SIN ENTREG",
+            "PENDIENTE",
+            "FALTANTE",
+            "NO RECIB"
+        ]
+    ):
+
+        return False
+
+    return "ENTREG" in estatus
+
+
+def construir_resultado_orden_urgencia(
+    fila,
+    clave_solicitada,
+    entidad_solicitada
+):
+
+    columnas = columnas_orden_urgencia()
+
+    clave = limpiar_valor_visual(
+        valor_fila_urgencia(
+            fila,
+            columnas["clave"]
+        )
+    ) or limpiar_valor_visual(
+        clave_solicitada
+    )
+
+    entidad_compendio = limpiar_valor_visual(
+        valor_fila_urgencia(
+            fila,
+            columnas["entidad"]
+        )
+    )
+
+    orden = limpiar_valor_visual(
+        valor_fila_urgencia(
+            fila,
+            columnas["orden"]
+        )
+    )
+
+    piezas_emitidas = valor_fila_urgencia(
+        fila,
+        columnas["piezas_emitidas"]
+    )
+
+    piezas_entregadas = valor_fila_urgencia(
+        fila,
+        columnas["piezas_entregadas"]
+    )
+
+    emitidas_num = convertir_numero(
+        piezas_emitidas
+    )
+
+    entregadas_num = convertir_numero(
+        piezas_entregadas
+    )
+
+    return {
+        "CLAVE_CNIS": clave,
+        "ENTIDAD": limpiar_valor_visual(entidad_solicitada),
+        "ENTIDAD_COMPENDIO": entidad_compendio,
+        "ORDEN_SUMINISTRO": orden,
+        "ESTATUS_BASE": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["estatus_base"]
+            )
+        ),
+        "TIPO_ENTREGA": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["tipo_entrega"]
+            )
+        ),
+        "CLUES_DESTINO": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["clues"]
+            )
+        ),
+        "UNIDAD_DESTINO": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["unidad"]
+            )
+        ),
+        "ALMACEN": construir_almacen(
+            valor_fila_urgencia(
+                fila,
+                columnas["clues"]
+            ),
+            valor_fila_urgencia(
+                fila,
+                columnas["unidad"]
+            ),
+            valor_fila_urgencia(
+                fila,
+                columnas["almacen"]
+            )
+        ),
+        "PROVEEDOR": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["proveedor"]
+            )
+        ),
+        "DESCRIPCION": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["descripcion"]
+            )
+        ),
+        "PIEZAS_EMITIDAS": piezas_emitidas,
+        "PIEZAS_RECIBIDAS_OL": valor_fila_urgencia(
+            fila,
+            columnas["piezas_recibidas_ol"]
+        ),
+        "PIEZAS_ENTREGADAS_CLUES": piezas_entregadas,
+        "PENDIENTE_ENTREGA": max(
+            emitidas_num - entregadas_num,
+            0
+        ),
+        "ESTATUS_ENTREGA_ENTIDAD": calcular_estatus_piezas(
+            piezas_emitidas,
+            piezas_entregadas
+        ),
+        "TIPO_RED": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["tipo_red"]
+            )
+        ),
+        "GRUPO_TERAPEUTICO": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["grupo"]
+            )
+        ),
+        "OPERADOR_LOGISTICO": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["operador"]
+            )
+        ),
+        "ORIGEN_COMPENDIO": limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["origen_compendio"]
+            )
+        )
+    }
+
+
+def buscar_ordenes_urgencia(clave, entidad):
+
+    compendio = consultar_compendio_por_clave_urgencia(
+        clave
+    )
+
+    vacio = pd.DataFrame(
+        columns=COLUMNAS_BASE_URGENCIAS_ORDENES
+    )
+
+    if compendio.empty:
+
+        return {
+            "ordenes": vacio,
+            "ordenes_entregadas": pd.DataFrame(),
+            "total_clave": 0,
+            "total_entidad": 0,
+            "total_con_orden": 0,
+            "sin_orden": True
+        }
+
+    columnas = columnas_orden_urgencia()
+    filas_entidad = []
+
+    for _, fila in compendio.iterrows():
+
+        entidad_fila = valor_fila_urgencia(
+            fila,
+            columnas["entidad"]
+        )
+
+        if entidades_urgencia_coinciden(
+            entidad_fila,
+            entidad
+        ):
+
+            filas_entidad.append(
+                fila
+            )
+
+    registros = []
+
+    for fila in filas_entidad:
+
+        orden = limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas["orden"]
+            )
+        )
+
+        if not orden:
+
+            continue
+
+        registro = construir_resultado_orden_urgencia(
+            fila,
+            clave,
+            entidad
+        )
+
+        registro["_ORDEN_NORMALIZADA"] = normalizar_orden(
+            orden
+        )
+
+        registro["_TIENE_ENTREGA"] = fila_urgencia_tiene_entrega(
+            fila
+        )
+
+        registros.append(
+            registro
+        )
+
+    if not registros:
+
+        return {
+            "ordenes": vacio,
+            "ordenes_entregadas": pd.DataFrame(),
+            "total_clave": len(compendio),
+            "total_entidad": len(filas_entidad),
+            "total_con_orden": 0,
+            "sin_orden": True
+        }
+
+    elegibles = []
+    entregadas = []
+    registros_df = pd.DataFrame(
+        registros
+    )
+
+    for _, grupo in registros_df.groupby(
+        "_ORDEN_NORMALIZADA",
+        dropna=False
+    ):
+
+        grupo = grupo.copy()
+
+        if grupo["_TIENE_ENTREGA"].astype(bool).any():
+
+            fila_entregada = grupo.sort_values(
+                "PIEZAS_ENTREGADAS_CLUES",
+                key=lambda serie: serie.apply(convertir_numero),
+                ascending=False
+            ).iloc[0].to_dict()
+
+            fila_entregada["MOTIVO_EXCLUSION"] = (
+                "Orden con entrega registrada en la entidad"
+            )
+
+            entregadas.append(
+                fila_entregada
+            )
+
+        else:
+
+            elegibles.append(
+                grupo.iloc[0].to_dict()
+            )
+
+    ordenes = pd.DataFrame(
+        elegibles
+    ).drop(
+        columns=[
+            "_ORDEN_NORMALIZADA",
+            "_TIENE_ENTREGA"
+        ],
+        errors="ignore"
+    )
+
+    if not ordenes.empty:
+
+        ordenes = ordenes.reindex(
+            columns=[
+                columna for columna in COLUMNAS_BASE_URGENCIAS_ORDENES
+                if columna in ordenes.columns
+            ]
+        )
+
+    ordenes_entregadas = pd.DataFrame(
+        entregadas
+    ).drop(
+        columns=[
+            "_ORDEN_NORMALIZADA",
+            "_TIENE_ENTREGA"
+        ],
+        errors="ignore"
+    )
+
+    return {
+        "ordenes": ordenes,
+        "ordenes_entregadas": ordenes_entregadas,
+        "total_clave": len(compendio),
+        "total_entidad": len(filas_entidad),
+        "total_con_orden": len(elegibles) + len(entregadas),
+        "sin_orden": len(registros) == 0
+    }
+
+
+def fecha_urgencia_iso(valor):
+
+    fecha = pd.to_datetime(
+        valor,
+        errors="coerce"
+    )
+
+    if pd.isna(fecha):
+
+        return limpiar_valor_visual(
+            valor
+        )
+
+    return fecha.strftime(
+        "%Y-%m-%d"
+    )
+
+
+def observaciones_urgencia(fecha, observaciones=""):
+
+    fecha_iso = fecha_urgencia_iso(
+        fecha
+    )
+
+    texto = limpiar_valor_visual(
+        observaciones
+    )
+
+    marcador = f"FECHA_URGENCIA={fecha_iso}"
+
+    if texto:
+
+        return f"{marcador}\n{texto}"
+
+    return marcador
+
+
+def datos_orden_urgencia_para_incidencia(registro):
+
+    return {
+        "orden": registro.get("ORDEN_SUMINISTRO", ""),
+        "tipo_entrega": registro.get("TIPO_ENTREGA", ""),
+        "entidad": registro.get("ENTIDAD", ""),
+        "clues_destino": registro.get("CLUES_DESTINO", ""),
+        "unidad_destino": registro.get("UNIDAD_DESTINO", ""),
+        "almacen": registro.get("ALMACEN", ""),
+        "proveedor": registro.get("PROVEEDOR", ""),
+        "clave": registro.get("CLAVE_CNIS", ""),
+        "descripcion": registro.get("DESCRIPCION", ""),
+        "piezas_emitidas": registro.get("PIEZAS_EMITIDAS", ""),
+        "piezas_recibidas_ol": registro.get("PIEZAS_RECIBIDAS_OL", ""),
+        "piezas_entregadas": registro.get("PIEZAS_ENTREGADAS_CLUES", ""),
+        "tipo_red": registro.get("TIPO_RED", ""),
+        "grupo_terapeutico": registro.get("GRUPO_TERAPEUTICO", ""),
+        "operador": registro.get("OPERADOR_LOGISTICO", ""),
+        "estatus_base": registro.get("ESTATUS_BASE", ""),
+        "origen_compendio": registro.get("ORIGEN_COMPENDIO", ""),
+        "estatus_recepcion_ol": "",
+        "estatus_entrega_estado": registro.get(
+            "ESTATUS_ENTREGA_ENTIDAD",
+            "NO ENTREGADA"
+        ),
+        "estatus_completa": "INCOMPLETA",
+        "estatus_orden": registro.get("ESTATUS_BASE", "")
+    }
+
+
+def construir_registro_urgencia(
+    registro_orden,
+    fecha,
+    responsable,
+    observaciones=""
+):
+
+    registro = construir_registro_incidencia(
+        registro_orden.get("ORDEN_SUMINISTRO", ""),
+        datos_orden_urgencia_para_incidencia(registro_orden),
+        "Por determinar",
+        "URGENCIA",
+        "En proceso",
+        responsable,
+        observaciones_urgencia(fecha, observaciones),
+        "",
+        ""
+    )
+
+    registro["ORIGEN_REGISTRO"] = "URGENCIAS"
+
+    return registro
+
+
+def construir_registro_urgencia_sin_orden(
+    clave,
+    entidad,
+    fecha,
+    responsable,
+    observaciones=""
+):
+
+    texto_observaciones = (
+        "Sin orden de suministro encontrada para la clave y entidad.\n"
+        f"{observaciones_urgencia(fecha, observaciones)}"
+    )
+
+    return {
+        "FECHA_REGISTRO": datetime.now(),
+        "ORIGEN_REGISTRO": "URGENCIAS",
+        "ORDEN_BUSCADA": "",
+        "orden_suministro": "",
+        "ORDEN": "",
+        "TIPO_ENTREGA": "",
+        "ENTIDAD": entidad,
+        "ALMACEN_CLUES_DESTINO": "",
+        "CLUES_DESTINO": "",
+        "UNIDAD_DESTINO": "",
+        "PROVEEDOR": "",
+        "CLAVE_CNIS": clave,
+        "DESCRIPCION": "",
+        "PIEZAS_EMITIDAS": "",
+        "PIEZAS_RECIBIDAS_OL": "",
+        "PIEZAS_ENTREGADAS_CLUES": "0",
+        "TIPO_RED": "",
+        "GRUPO_TERAPEUTICO": "",
+        "ESTATUS_OPERATIVO": "SIN ORDEN",
+        "ESTATUS_BASE": "SIN ORDEN",
+        "ORIGEN_COMPENDIO": "",
+        "OPERADOR_LOGISTICO": "",
+        "ESTATUS_RECEPCION_OL": "",
+        "ESTATUS_ENTREGA_ESTADO": "NO ENTREGADA",
+        "ESTATUS_INCIDENCIA_COMPLETA": "INCOMPLETA",
+        "ESTATUS_SEGUIMIENTO": "Incompleta-sin Entregar",
+        "ATRIBUIBLE A": "Por determinar",
+        "TIPO_INCIDENCIA": "URGENCIA",
+        "ESTATUS_INCIDENCIA": "En proceso",
+        "RESPONSABLE": responsable,
+        "OBSERVACIONES": texto_observaciones,
+        "PDF_CEDULA_RECHAZO": "",
+        "PDF_CORREO_SEGUIMIENTO": ""
+    }
+
+
+def urgencia_ya_registrada(
+    incidencias_actuales,
+    clave,
+    entidad,
+    fecha,
+    orden=""
+):
+
+    if incidencias_actuales is None or incidencias_actuales.empty:
+
+        return False
+
+    fecha_iso = fecha_urgencia_iso(
+        fecha
+    )
+
+    clave_norm = normalizar_clave_urgencia(
+        clave
+    )
+
+    orden_norm = normalizar_orden(
+        orden
+    ) if limpiar_valor_visual(orden) else ""
+
+    for _, fila in incidencias_actuales.iterrows():
+
+        if limpiar_valor_visual(
+            obtener_valor(
+                fila,
+                [
+                    "TIPO_INCIDENCIA",
+                    "tipo_incidencia"
+                ]
+            )
+        ).upper() != "URGENCIA":
+
+            continue
+
+        if normalizar_clave_urgencia(
+            obtener_valor(
+                fila,
+                [
+                    "CLAVE_CNIS",
+                    "clave_cnis",
+                    "CLAVE",
+                    "clave"
+                ]
+            )
+        ) != clave_norm:
+
+            continue
+
+        if not entidades_urgencia_coinciden(
+            obtener_valor(
+                fila,
+                [
+                    "ENTIDAD",
+                    "entidad"
+                ]
+            ),
+            entidad
+        ):
+
+            continue
+
+        orden_fila = normalizar_orden(
+            obtener_valor(
+                fila,
+                [
+                    "ORDEN",
+                    "orden",
+                    "orden_suministro",
+                    "ORDEN_BUSCADA"
+                ]
+            )
+        )
+
+        if orden_fila != orden_norm:
+
+            continue
+
+        observaciones = limpiar_valor_visual(
+            obtener_valor(
+                fila,
+                [
+                    "OBSERVACIONES",
+                    "observaciones"
+                ]
+            )
+        )
+
+        if f"FECHA_URGENCIA={fecha_iso}" in observaciones:
+
+            return True
+
+        fecha_registro = pd.to_datetime(
+            obtener_valor(
+                fila,
+                [
+                    "FECHA_REGISTRO",
+                    "fecha_registro"
+                ]
+            ),
+            errors="coerce"
+        )
+
+        if not pd.isna(fecha_registro) and fecha_registro.strftime(
+            "%Y-%m-%d"
+        ) == fecha_iso:
+
+            return True
+
+    return False
+
+
+def buscar_google_sheet_urgencias():
+
+    query = (
+        f"name = '{NOMBRE_GOOGLE_SHEET_URGENCIAS}' "
+        "and mimeType = 'application/vnd.google-apps.spreadsheet' "
+        f"and '{FOLDER_ID_INCIDENCIAS_DRIVE}' in parents "
+        "and trashed = false"
+    )
+
+    resultado = (
+        drive_service
+        .files()
+        .list(
+            q=query,
+            fields="files(id, name, webViewLink)",
+            corpora="allDrives",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        )
+        .execute()
+    )
+
+    archivos = resultado.get(
+        "files",
+        []
+    )
+
+    return archivos[0] if archivos else None
+
+
+def crear_google_sheet_urgencias():
+
+    metadata = {
+        "name": NOMBRE_GOOGLE_SHEET_URGENCIAS,
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+        "parents": [
+            FOLDER_ID_INCIDENCIAS_DRIVE
+        ]
+    }
+
+    return (
+        drive_service
+        .files()
+        .create(
+            body=metadata,
+            fields="id, name, webViewLink",
+            supportsAllDrives=True
+        )
+        .execute()
+    )
+
+
+def obtener_o_crear_google_sheet_urgencias():
+
+    archivo = buscar_google_sheet_urgencias()
+
+    if archivo:
+
+        return archivo
+
+    return crear_google_sheet_urgencias()
+
+
+def asegurar_hojas_google_sheet_urgencias(spreadsheet_id):
+
+    def obtener_hojas():
+
+        respuesta = (
+            sheets_service
+            .spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                fields="sheets(properties(sheetId,title,index))"
+            )
+            .execute()
+        )
+
+        return [
+            hoja.get(
+                "properties",
+                {}
+            )
+            for hoja in respuesta.get(
+                "sheets",
+                []
+            )
+        ]
+
+    hojas = obtener_hojas()
+    titulos = {
+        hoja.get(
+            "title",
+            ""
+        )
+        for hoja in hojas
+    }
+
+    if NOMBRE_HOJA_URGENCIAS_ORDENES not in titulos:
+
+        solicitudes = []
+
+        if len(hojas) == 1 and hojas[0].get(
+            "title",
+            ""
+        ) in [
+            "Sheet1",
+            "Hoja 1",
+            "Página1",
+            "Pagina1"
+        ]:
+
+            solicitudes.append(
+                {
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": hojas[0].get(
+                                "sheetId"
+                            ),
+                            "title": NOMBRE_HOJA_URGENCIAS_ORDENES
+                        },
+                        "fields": "title"
+                    }
+                }
+            )
+
+        else:
+
+            solicitudes.append(
+                {
+                    "addSheet": {
+                        "properties": {
+                            "title": NOMBRE_HOJA_URGENCIAS_ORDENES
+                        }
+                    }
+                }
+            )
+
+        sheets_service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": solicitudes
+            }
+        ).execute()
+
+    hojas = obtener_hojas()
+    titulos = {
+        hoja.get(
+            "title",
+            ""
+        )
+        for hoja in hojas
+    }
+
+    if NOMBRE_HOJA_URGENCIAS_SIN_ORDEN not in titulos:
+
+        sheets_service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "addSheet": {
+                            "properties": {
+                                "title": NOMBRE_HOJA_URGENCIAS_SIN_ORDEN
+                            }
+                        }
+                    }
+                ]
+            }
+        ).execute()
+
+
+def leer_hoja_urgencias(spreadsheet_id, nombre_hoja):
+
+    try:
+
+        respuesta = (
+            sheets_service
+            .spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=f"{nombre_hoja}!A:ZZ"
+            )
+            .execute()
+        )
+
+    except Exception:
+
+        return pd.DataFrame()
+
+    valores = respuesta.get(
+        "values",
+        []
+    )
+
+    if len(valores) < 2:
+
+        return pd.DataFrame()
+
+    encabezados = [
+        limpiar_valor_visual(valor)
+        for valor in valores[0]
+    ]
+
+    if not encabezados or encabezados == [
+        "SIN_DATOS"
+    ]:
+
+        return pd.DataFrame()
+
+    filas = []
+
+    for valores_fila in valores[1:]:
+
+        fila = list(valores_fila)
+
+        if len(fila) < len(encabezados):
+
+            fila.extend(
+                [""] * (len(encabezados) - len(fila))
+            )
+
+        filas.append(
+            fila[:len(encabezados)]
+        )
+
+    return pd.DataFrame(
+        filas,
+        columns=encabezados
+    )
+
+
+def deduplicar_base_urgencias(df, claves):
+
+    if df is None or df.empty:
+
+        return pd.DataFrame()
+
+    trabajo = df.copy()
+
+    for columna in claves:
+
+        if columna not in trabajo.columns:
+
+            trabajo[columna] = ""
+
+    trabajo["_LLAVE_UNICA"] = trabajo[claves].apply(
+        lambda fila: "|".join(
+            normalizar_clave_urgencia(valor)
+            if columna == "CLAVE_CNIS"
+            else normalizar_orden(valor)
+            if columna == "ORDEN_SUMINISTRO"
+            else limpiar_valor_visual(valor).upper().strip()
+            for columna, valor in fila.items()
+        ),
+        axis=1
+    )
+
+    trabajo = trabajo.drop_duplicates(
+        subset=[
+            "_LLAVE_UNICA"
+        ],
+        keep="last"
+    )
+
+    return trabajo.drop(
+        columns=[
+            "_LLAVE_UNICA"
+        ],
+        errors="ignore"
+    )
+
+
+def escribir_hoja_urgencias(
+    spreadsheet_id,
+    nombre_hoja,
+    df
+):
+
+    valores = preparar_dataframe_para_sheets(
+        df
+    )
+
+    sheets_service.spreadsheets().values().clear(
+        spreadsheetId=spreadsheet_id,
+        range=f"{nombre_hoja}!A:ZZ"
+    ).execute()
+
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"{nombre_hoja}!A1",
+        valueInputOption="RAW",
+        body={
+            "values": valores
+        }
+    ).execute()
+
+
+def actualizar_base_urgencias_drive(
+    ordenes_nuevas,
+    sin_orden_nuevas
+):
+
+    archivo = obtener_o_crear_google_sheet_urgencias()
+    spreadsheet_id = archivo["id"]
+
+    asegurar_hojas_google_sheet_urgencias(
+        spreadsheet_id
+    )
+
+    ordenes_previas = leer_hoja_urgencias(
+        spreadsheet_id,
+        NOMBRE_HOJA_URGENCIAS_ORDENES
+    )
+
+    sin_orden_previas = leer_hoja_urgencias(
+        spreadsheet_id,
+        NOMBRE_HOJA_URGENCIAS_SIN_ORDEN
+    )
+
+    ordenes_nuevas = ordenes_nuevas.copy() if isinstance(
+        ordenes_nuevas,
+        pd.DataFrame
+    ) else pd.DataFrame()
+
+    sin_orden_nuevas = sin_orden_nuevas.copy() if isinstance(
+        sin_orden_nuevas,
+        pd.DataFrame
+    ) else pd.DataFrame()
+
+    if not ordenes_nuevas.empty:
+
+        ordenes_nuevas = ordenes_nuevas.reindex(
+            columns=COLUMNAS_BASE_URGENCIAS_ORDENES
+        )
+
+    if not sin_orden_nuevas.empty:
+
+        sin_orden_nuevas = sin_orden_nuevas.reindex(
+            columns=COLUMNAS_BASE_URGENCIAS_SIN_ORDEN
+        )
+
+    ordenes = pd.concat(
+        [
+            ordenes_previas,
+            ordenes_nuevas
+        ],
+        ignore_index=True
+    )
+
+    sin_orden = pd.concat(
+        [
+            sin_orden_previas,
+            sin_orden_nuevas
+        ],
+        ignore_index=True
+    )
+
+    ordenes = deduplicar_base_urgencias(
+        ordenes,
+        [
+            "FECHA_URGENCIA",
+            "CLAVE_CNIS",
+            "ENTIDAD",
+            "ORDEN_SUMINISTRO"
+        ]
+    )
+
+    sin_orden = deduplicar_base_urgencias(
+        sin_orden,
+        [
+            "FECHA_URGENCIA",
+            "CLAVE_CNIS",
+            "ENTIDAD"
+        ]
+    )
+
+    if not ordenes.empty:
+
+        ordenes = ordenes.reindex(
+            columns=COLUMNAS_BASE_URGENCIAS_ORDENES
+        )
+
+    if not sin_orden.empty:
+
+        sin_orden = sin_orden.reindex(
+            columns=COLUMNAS_BASE_URGENCIAS_SIN_ORDEN
+        )
+
+    escribir_hoja_urgencias(
+        spreadsheet_id,
+        NOMBRE_HOJA_URGENCIAS_ORDENES,
+        ordenes
+    )
+
+    escribir_hoja_urgencias(
+        spreadsheet_id,
+        NOMBRE_HOJA_URGENCIAS_SIN_ORDEN,
+        sin_orden
+    )
+
+    return {
+        "link": archivo.get(
+            "webViewLink",
+            f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+        ),
+        "ordenes": len(ordenes),
+        "sin_orden": len(sin_orden)
+    }
 
 
 def obtener_datos_orden_para_registro(
@@ -3153,6 +4559,300 @@ def construir_registro_incidencia(
     }
 
 
+def preparar_fila_base_urgencia_orden(
+    registro,
+    fecha,
+    responsable,
+    incidencia_id,
+    observaciones
+):
+
+    fecha_visual = fecha_a_texto(
+        fecha
+    )
+
+    return {
+        "FECHA_URGENCIA": fecha_visual,
+        "SOLICITUD": fecha_visual,
+        "CLAVE_CNIS": registro.get("CLAVE_CNIS", ""),
+        "ENTIDAD": registro.get("ENTIDAD", ""),
+        "ENTIDAD_COMPENDIO": registro.get("ENTIDAD_COMPENDIO", ""),
+        "ORDEN_SUMINISTRO": registro.get("ORDEN_SUMINISTRO", ""),
+        "ESTATUS_BASE": registro.get("ESTATUS_BASE", ""),
+        "TIPO_ENTREGA": registro.get("TIPO_ENTREGA", ""),
+        "CLUES_DESTINO": registro.get("CLUES_DESTINO", ""),
+        "UNIDAD_DESTINO": registro.get("UNIDAD_DESTINO", ""),
+        "ALMACEN": registro.get("ALMACEN", ""),
+        "PROVEEDOR": registro.get("PROVEEDOR", ""),
+        "DESCRIPCION": registro.get("DESCRIPCION", ""),
+        "PIEZAS_EMITIDAS": registro.get("PIEZAS_EMITIDAS", ""),
+        "PIEZAS_ENTREGADAS_CLUES": registro.get(
+            "PIEZAS_ENTREGADAS_CLUES",
+            ""
+        ),
+        "PENDIENTE_ENTREGA": registro.get(
+            "PENDIENTE_ENTREGA",
+            ""
+        ),
+        "ESTATUS_ENTREGA_ENTIDAD": registro.get(
+            "ESTATUS_ENTREGA_ENTIDAD",
+            "NO ENTREGADA"
+        ),
+        "TIPO_RED": registro.get("TIPO_RED", ""),
+        "GRUPO_TERAPEUTICO": registro.get("GRUPO_TERAPEUTICO", ""),
+        "OPERADOR_LOGISTICO": registro.get("OPERADOR_LOGISTICO", ""),
+        "ORIGEN_COMPENDIO": registro.get("ORIGEN_COMPENDIO", ""),
+        "RESPONSABLE": responsable,
+        "FECHA_REGISTRO": fecha_a_texto(
+            datetime.now()
+        ),
+        "ID_INCIDENCIA": incidencia_id,
+        "OBSERVACIONES": observaciones,
+        "FECHA_ACTUALIZACION_BASE": fecha_a_texto(
+            datetime.now()
+        )
+    }
+
+
+def preparar_fila_base_urgencia_sin_orden(
+    clave,
+    entidad,
+    fecha,
+    responsable,
+    incidencia_id,
+    observaciones
+):
+
+    fecha_visual = fecha_a_texto(
+        fecha
+    )
+
+    return {
+        "FECHA_URGENCIA": fecha_visual,
+        "SOLICITUD": fecha_visual,
+        "CLAVE_CNIS": clave,
+        "ENTIDAD": entidad,
+        "RESPONSABLE": responsable,
+        "FECHA_REGISTRO": fecha_a_texto(
+            datetime.now()
+        ),
+        "ID_INCIDENCIA": incidencia_id,
+        "MOTIVO": "No se encontró orden para la clave y entidad",
+        "OBSERVACIONES": observaciones,
+        "FECHA_ACTUALIZACION_BASE": fecha_a_texto(
+            datetime.now()
+        )
+    }
+
+
+def registrar_urgencia_completa(
+    clave,
+    entidad,
+    fecha,
+    responsable,
+    observaciones,
+    resultado_busqueda,
+    incidencias_actuales
+):
+
+    ordenes = resultado_busqueda.get(
+        "ordenes",
+        pd.DataFrame()
+    )
+
+    sin_orden = bool(
+        resultado_busqueda.get(
+            "sin_orden",
+            False
+        )
+    )
+
+    guardadas = 0
+    duplicadas = 0
+    errores = []
+    filas_base_ordenes = []
+    filas_base_sin_orden = []
+
+    if not ordenes.empty:
+
+        for _, fila in ordenes.iterrows():
+
+            registro = fila.to_dict()
+            orden = registro.get(
+                "ORDEN_SUMINISTRO",
+                ""
+            )
+
+            if urgencia_ya_registrada(
+                incidencias_actuales,
+                clave,
+                entidad,
+                fecha,
+                orden
+            ):
+
+                duplicadas += 1
+
+                filas_base_ordenes.append(
+                    preparar_fila_base_urgencia_orden(
+                        registro,
+                        fecha,
+                        responsable,
+                        "",
+                        observaciones_urgencia(
+                            fecha,
+                            observaciones
+                        )
+                    )
+                )
+
+                continue
+
+            try:
+
+                nueva = construir_registro_urgencia(
+                    registro,
+                    fecha,
+                    responsable,
+                    observaciones
+                )
+
+                incidencia_id = guardar_incidencia(
+                    nueva
+                )
+
+                guardadas += 1
+
+                filas_base_ordenes.append(
+                    preparar_fila_base_urgencia_orden(
+                        registro,
+                        fecha,
+                        responsable,
+                        incidencia_id,
+                        observaciones_urgencia(
+                            fecha,
+                            observaciones
+                        )
+                    )
+                )
+
+            except Exception as e:
+
+                errores.append(
+                    f"{orden}: {e}"
+                )
+
+    elif sin_orden:
+
+        if urgencia_ya_registrada(
+            incidencias_actuales,
+            clave,
+            entidad,
+            fecha,
+            ""
+        ):
+
+            duplicadas += 1
+
+            filas_base_sin_orden.append(
+                preparar_fila_base_urgencia_sin_orden(
+                    clave,
+                    entidad,
+                    fecha,
+                    responsable,
+                    "",
+                    observaciones_urgencia(
+                        fecha,
+                        observaciones
+                    )
+                )
+            )
+
+        else:
+
+            try:
+
+                nueva = construir_registro_urgencia_sin_orden(
+                    clave,
+                    entidad,
+                    fecha,
+                    responsable,
+                    observaciones
+                )
+
+                incidencia_id = guardar_incidencia(
+                    nueva
+                )
+
+                guardadas += 1
+
+                filas_base_sin_orden.append(
+                    preparar_fila_base_urgencia_sin_orden(
+                        clave,
+                        entidad,
+                        fecha,
+                        responsable,
+                        incidencia_id,
+                        observaciones_urgencia(
+                            fecha,
+                            observaciones
+                        )
+                    )
+                )
+
+            except Exception as e:
+
+                errores.append(
+                    f"{clave} / {entidad}: {e}"
+                )
+
+    resultado_drive = None
+    link_incidencias = ""
+
+    if guardadas > 0:
+
+        try:
+
+            link_incidencias = generar_respaldo_drive()
+
+        except Exception as e:
+
+            errores.append(
+                f"Respaldo general de incidencias: {e}"
+            )
+
+    if filas_base_ordenes or filas_base_sin_orden:
+
+        try:
+
+            resultado_drive = actualizar_base_urgencias_drive(
+                pd.DataFrame(
+                    filas_base_ordenes,
+                    columns=COLUMNAS_BASE_URGENCIAS_ORDENES
+                ),
+                pd.DataFrame(
+                    filas_base_sin_orden,
+                    columns=COLUMNAS_BASE_URGENCIAS_SIN_ORDEN
+                )
+            )
+
+        except Exception as e:
+
+            errores.append(
+                f"Base de Urgencias en Drive: {e}"
+            )
+
+    return {
+        "guardadas": guardadas,
+        "duplicadas": duplicadas,
+        "errores": errores,
+        "drive": resultado_drive,
+        "drive_incidencias": link_incidencias,
+        "ordenes_no_entregadas": len(filas_base_ordenes),
+        "sin_orden": len(filas_base_sin_orden)
+    }
+
+
 def extraer_ordenes_masivas(
     texto
 ):
@@ -3436,21 +5136,6 @@ def generar_reporte_ejecutivo_pdf(incidencias):
 
     hoy = fecha_hoy_sistema()
 
-    # Fecha base del reporte para filtros del mes actual.
-    # Se define aquí para que esté disponible en todo el PDF.
-    hoy_dt = pd.to_datetime(
-        hoy,
-        errors="coerce"
-    )
-
-    if pd.isna(
-        hoy_dt
-    ):
-
-        hoy_dt = pd.Timestamp.now(
-            tz="America/Mexico_City"
-        )
-
     elementos.append(
         Paragraph(
             f"Fecha del reporte: {hoy}",
@@ -3499,32 +5184,9 @@ def generar_reporte_ejecutivo_pdf(incidencias):
 
             df[columna] = ""
 
-    # Corrección: el resumen ejecutivo debe tomar el día conforme al horario
-    # de México, no conforme al día UTC ni al formato original de Supabase.
-    # Esto evita que las capturas hechas por la tarde/noche queden fuera del
-    # apartado "Resumen del día" por diferencia de zona horaria.
     df["FECHA_REGISTRO_DT"] = pd.to_datetime(
         df["FECHA_REGISTRO"],
-        errors="coerce",
-        utc=True
-    )
-
-    # Si algún registro antiguo no trae FECHA_REGISTRO, intenta usar CREADO_EN.
-    if "CREADO_EN" in df.columns:
-
-        fechas_creado_en = pd.to_datetime(
-            df["CREADO_EN"],
-            errors="coerce",
-            utc=True
-        )
-
-        df["FECHA_REGISTRO_DT"] = df["FECHA_REGISTRO_DT"].fillna(
-            fechas_creado_en
-        )
-
-    df["FECHA_REGISTRO_MX"] = (
-        df["FECHA_REGISTRO_DT"]
-        .dt.tz_convert("America/Mexico_City")
+        errors="coerce"
     )
 
     df["MONITORA"] = df["RESPONSABLE"].apply(
@@ -3532,7 +5194,7 @@ def generar_reporte_ejecutivo_pdf(incidencias):
     )
 
     df_hoy = df[
-        df["FECHA_REGISTRO_MX"].dt.strftime("%Y-%m-%d") == hoy
+        df["FECHA_REGISTRO_DT"].dt.strftime("%Y-%m-%d") == hoy
     ].copy()
 
     total_hoy = len(df_hoy)
@@ -3677,208 +5339,8 @@ def generar_reporte_ejecutivo_pdf(incidencias):
         )
 
     elementos.append(
-        PageBreak()
-    )
-
-    elementos.append(
         Paragraph(
-            "2. Incidencias registradas por mes, día y monitora",
-            estilo_subtitulo
-        )
-    )
-
-    df_fechas = df[
-        df["FECHA_REGISTRO_MX"].notna()
-    ].copy()
-
-    if df_fechas.empty:
-
-        elementos.append(
-            Paragraph(
-                "No existen fechas válidas para desglosar las incidencias por mes, día y monitora.",
-                normal
-            )
-        )
-
-    else:
-
-        df_fechas["MES"] = df_fechas["FECHA_REGISTRO_MX"].dt.strftime(
-            "%Y-%m"
-        )
-
-        df_fechas["DÍA"] = df_fechas["FECHA_REGISTRO_MX"].dt.strftime(
-            "%d/%m/%Y"
-        )
-
-        df_fechas["MONITORA"] = df_fechas["MONITORA"].replace(
-            "",
-            "SIN RESPONSABLE"
-        )
-
-        resumen_mes_monitora = (
-            df_fechas
-            .groupby(
-                [
-                    "MES",
-                    "MONITORA"
-                ],
-                dropna=False
-            )
-            .size()
-            .reset_index(
-                name="Incidencias"
-            )
-            .sort_values(
-                [
-                    "MES",
-                    "Incidencias",
-                    "MONITORA"
-                ],
-                ascending=[
-                    False,
-                    False,
-                    True
-                ]
-            )
-        )
-
-        elementos += tabla_pdf(
-            "Resumen mensual por monitora",
-            resumen_mes_monitora,
-            max_filas=80,
-            anchos=[
-                4 * cm,
-                14 * cm,
-                4 * cm
-            ]
-        )
-
-        detalle_dia_monitora = (
-            df_fechas
-            .groupby(
-                [
-                    "MES",
-                    "DÍA",
-                    "MONITORA"
-                ],
-                dropna=False
-            )
-            .size()
-            .reset_index(
-                name="Incidencias registradas"
-            )
-            .sort_values(
-                [
-                    "MES",
-                    "DÍA",
-                    "MONITORA"
-                ],
-                ascending=[
-                    False,
-                    False,
-                    True
-                ]
-            )
-        )
-
-        elementos += tabla_pdf(
-            "Detalle por mes, día y monitora",
-            detalle_dia_monitora,
-            max_filas=250,
-            anchos=[
-                3.4 * cm,
-                4 * cm,
-                13 * cm,
-                4.5 * cm
-            ]
-        )
-
-        # Vista cruzada del mes actual: facilita ver rápidamente quién capturó cada día.
-        df_mes_actual = df_fechas[
-            df_fechas["MES"] == hoy_dt.strftime(
-                "%Y-%m"
-            )
-        ].copy()
-
-        if not df_mes_actual.empty:
-
-            cruce_mes_actual = pd.pivot_table(
-                df_mes_actual,
-                index="DÍA",
-                columns="MONITORA",
-                values="ORDEN",
-                aggfunc="count",
-                fill_value=0
-            ).reset_index()
-
-            cruce_mes_actual["Total"] = cruce_mes_actual.drop(
-                columns=[
-                    "DÍA"
-                ],
-                errors="ignore"
-            ).sum(axis=1)
-
-            cruce_mes_actual = cruce_mes_actual.sort_values(
-                "DÍA",
-                ascending=False
-            )
-
-            columnas_cruce = cruce_mes_actual.columns.tolist()
-
-            if len(columnas_cruce) > 9:
-
-                top_monitoras_mes = (
-                    df_mes_actual
-                    .groupby(
-                        "MONITORA"
-                    )
-                    .size()
-                    .sort_values(
-                        ascending=False
-                    )
-                    .head(
-                        7
-                    )
-                    .index
-                    .tolist()
-                )
-
-                columnas_cruce = [
-                    "DÍA"
-                ] + top_monitoras_mes + [
-                    "Total"
-                ]
-
-                cruce_mes_actual = cruce_mes_actual[
-                    [
-                        c for c in columnas_cruce
-                        if c in cruce_mes_actual.columns
-                    ]
-                ]
-
-            columnas_restantes = max(
-                len(cruce_mes_actual.columns) - 1,
-                1
-            )
-
-            elementos += tabla_pdf(
-                "Cruce diario del mes actual por monitora",
-                cruce_mes_actual,
-                max_filas=31,
-                anchos=[
-                    3.5 * cm
-                ] + [
-                    21.5 * cm / columnas_restantes
-                ] * columnas_restantes
-            )
-
-    elementos.append(
-        PageBreak()
-    )
-
-    elementos.append(
-        Paragraph(
-            "3. Resumen general acumulado",
+            "2. Resumen general acumulado",
             estilo_subtitulo
         )
     )
@@ -4059,6 +5521,7 @@ menu = st.sidebar.radio(
     "Menú",
     [
         "Registrar incidencia",
+        "Urgencias",
         "Resumen Ejecutivo",
         "Seguimiento",
         "Cédulas de rechazo",
@@ -4867,9 +6330,6 @@ if menu == "Registrar incidencia":
                 tipo_red = datos_orden["tipo_red"]
                 grupo_terapeutico = datos_orden["grupo_terapeutico"]
                 estatus_orden = datos_orden["estatus_orden"]
-                estatus_recepcion_ol = datos_orden.get("estatus_recepcion_ol", "")
-                estatus_entrega_estado = datos_orden.get("estatus_entrega_estado", "")
-                estatus_completa = datos_orden.get("estatus_completa", "")
                 incidencias_previas = obtener_incidencias_previas_supabase(
                     orden
                 )
@@ -5470,6 +6930,307 @@ if menu == "Registrar incidencia":
 
 
 # =========================
+# URGENCIAS
+# =========================
+
+elif menu == "Urgencias":
+
+    st.subheader(
+        "🚨 Registro de urgencias"
+    )
+
+    st.caption(
+        "Captura la clave, la entidad y la fecha de solicitud. "
+        "El sistema localizará las órdenes existentes y conservará únicamente "
+        "las que no tengan entrega registrada en la entidad."
+    )
+
+    c1, c2, c3 = st.columns(
+        [
+            1,
+            2,
+            1
+        ]
+    )
+
+    with c1:
+
+        clave_urgencia = st.text_input(
+            "Clave CNIS",
+            placeholder="Ejemplo: 010.000.0012.00",
+            key="urgencias_clave"
+        ).strip()
+
+    with c2:
+
+        entidad_urgencia = st.text_input(
+            "Estado / entidad",
+            placeholder="Ejemplo: Veracruz",
+            key="urgencias_entidad"
+        ).strip()
+
+    with c3:
+
+        fecha_urgencia = st.date_input(
+            "Fecha de solicitud",
+            value=datetime.now().date(),
+            key="urgencias_fecha"
+        )
+
+    responsable_urgencia = st.selectbox(
+        "Monitora / responsable",
+        MONITORES,
+        key="urgencias_responsable"
+    )
+
+    observaciones_urgencia_captura = st.text_area(
+        "Observaciones de la urgencia",
+        placeholder="Describe brevemente la necesidad o el seguimiento requerido.",
+        key="urgencias_observaciones"
+    )
+
+    buscar_urgencia = st.button(
+        "🔎 Consultar órdenes de la clave",
+        use_container_width=True,
+        key="urgencias_buscar"
+    )
+
+    if buscar_urgencia:
+
+        if not clave_urgencia or not entidad_urgencia:
+
+            st.warning(
+                "Captura la clave CNIS y el estado / entidad antes de consultar."
+            )
+
+        else:
+
+            with st.spinner(
+                "Consultando órdenes y validando entregas en la entidad..."
+            ):
+
+                resultado_urgencia = buscar_ordenes_urgencia(
+                    clave_urgencia,
+                    entidad_urgencia
+                )
+
+            st.session_state["resultado_urgencias"] = {
+                "clave": normalizar_clave_urgencia(
+                    clave_urgencia
+                ),
+                "entidad": normalizar_entidad_urgencia(
+                    entidad_urgencia
+                ),
+                "fecha": fecha_urgencia_iso(
+                    fecha_urgencia
+                ),
+                "resultado": resultado_urgencia
+            }
+
+    resultado_guardado = st.session_state.get(
+        "resultado_urgencias"
+    )
+
+    consulta_actual = (
+        resultado_guardado
+        and resultado_guardado.get("clave") == normalizar_clave_urgencia(
+            clave_urgencia
+        )
+        and resultado_guardado.get("entidad") == normalizar_entidad_urgencia(
+            entidad_urgencia
+        )
+        and resultado_guardado.get("fecha") == fecha_urgencia_iso(
+            fecha_urgencia
+        )
+    )
+
+    if consulta_actual:
+
+        resultado_urgencia = resultado_guardado["resultado"]
+        ordenes_urgencia = resultado_urgencia.get(
+            "ordenes",
+            pd.DataFrame()
+        )
+        ordenes_entregadas_urgencia = resultado_urgencia.get(
+            "ordenes_entregadas",
+            pd.DataFrame()
+        )
+
+        st.divider()
+        st.subheader(
+            "Resultado de la consulta"
+        )
+
+        m1, m2, m3, m4 = st.columns(
+            4
+        )
+
+        m1.metric(
+            "Registros de la clave",
+            resultado_urgencia.get("total_clave", 0)
+        )
+
+        m2.metric(
+            "Órdenes en la entidad",
+            resultado_urgencia.get("total_con_orden", 0)
+        )
+
+        m3.metric(
+            "No entregadas elegibles",
+            len(ordenes_urgencia)
+        )
+
+        m4.metric(
+            "Excluidas por entrega",
+            len(ordenes_entregadas_urgencia)
+        )
+
+        if not ordenes_urgencia.empty:
+
+            st.success(
+                "Estas son las órdenes que sí se pueden registrar como urgencia "
+                "porque no tienen entrega registrada en la entidad."
+            )
+
+            columnas_preview = [
+                "CLAVE_CNIS",
+                "ENTIDAD",
+                "ORDEN_SUMINISTRO",
+                "ESTATUS_BASE",
+                "TIPO_ENTREGA",
+                "CLUES_DESTINO",
+                "UNIDAD_DESTINO",
+                "PROVEEDOR",
+                "PIEZAS_EMITIDAS",
+                "PIEZAS_ENTREGADAS_CLUES",
+                "ESTATUS_ENTREGA_ENTIDAD"
+            ]
+
+            dataframe_limpio(
+                ordenes_urgencia[
+                    [
+                        columna for columna in columnas_preview
+                        if columna in ordenes_urgencia.columns
+                    ]
+                ]
+            )
+
+        elif resultado_urgencia.get("sin_orden", False):
+
+            st.warning(
+                "No se encontró una orden de suministro para la clave y entidad. "
+                "La solicitud se guardará en la hoja Sin_Orden_Urgencias."
+            )
+
+        elif not ordenes_entregadas_urgencia.empty:
+
+            st.warning(
+                "La clave sí tiene órdenes en la entidad, pero todas tienen "
+                "entrega registrada. No se guardará ninguna orden para la urgencia."
+            )
+
+        if not ordenes_entregadas_urgencia.empty:
+
+            with st.expander(
+                "Ver órdenes excluidas por tener entrega en la entidad"
+            ):
+
+                columnas_excluidas = [
+                    "ORDEN_SUMINISTRO",
+                    "PIEZAS_ENTREGADAS_CLUES",
+                    "ESTATUS_ENTREGA_ENTIDAD",
+                    "MOTIVO_EXCLUSION"
+                ]
+
+                dataframe_limpio(
+                    ordenes_entregadas_urgencia[
+                        [
+                            columna for columna in columnas_excluidas
+                            if columna in ordenes_entregadas_urgencia.columns
+                        ]
+                    ]
+                )
+
+        puede_guardar_urgencia = (
+            not ordenes_urgencia.empty
+            or resultado_urgencia.get("sin_orden", False)
+        )
+
+        if puede_guardar_urgencia:
+
+            st.divider()
+
+            guardar_urgencia = st.button(
+                "💾 Registrar urgencia y actualizar base de Drive",
+                use_container_width=True,
+                key="urgencias_guardar"
+            )
+
+            if guardar_urgencia:
+
+                with st.spinner(
+                    "Registrando incidencia y actualizando la base de Urgencias..."
+                ):
+
+                    resultado_guardado_urgencia = registrar_urgencia_completa(
+                        clave_urgencia,
+                        entidad_urgencia,
+                        fecha_urgencia,
+                        responsable_urgencia,
+                        observaciones_urgencia_captura,
+                        resultado_urgencia,
+                        incidencias
+                    )
+
+                if resultado_guardado_urgencia.get("guardadas", 0) > 0:
+
+                    st.success(
+                        "Urgencia registrada como incidencia."
+                    )
+
+                if resultado_guardado_urgencia.get("duplicadas", 0) > 0:
+
+                    st.info(
+                        "Se omitieron registros que ya estaban capturados "
+                        "para la misma clave, entidad, orden y fecha."
+                    )
+
+                drive_urgencia = resultado_guardado_urgencia.get(
+                    "drive"
+                )
+
+                if drive_urgencia:
+
+                    st.success(
+                        "Base de Urgencias actualizada en Drive: "
+                        f"{drive_urgencia.get('ordenes', 0)} órdenes y "
+                        f"{drive_urgencia.get('sin_orden', 0)} solicitudes sin orden."
+                    )
+
+                    st.link_button(
+                        "🔗 Abrir base de Urgencias en Drive",
+                        drive_urgencia.get("link", ""),
+                        use_container_width=True
+                    )
+
+                if resultado_guardado_urgencia.get("errores"):
+
+                    st.error(
+                        "Se presentaron errores durante el registro."
+                    )
+
+                    st.write(
+                        resultado_guardado_urgencia.get("errores")
+                    )
+
+                st.cache_data.clear()
+                st.session_state.pop(
+                    "resultado_urgencias",
+                    None
+                )
+
+
+# =========================
 # SEGUIMIENTO
 # =========================
 
@@ -5616,128 +7377,8 @@ elif menu == "Seguimiento":
 
         st.divider()
 
-        st.divider()
-
-        st.markdown(
-            "### 📎 Subir cédula de rechazo a incidencia ya capturada"
-        )
-
-        st.caption(
-            "Selecciona una incidencia registrada y adjunta el PDF. El link se guardará en la columna PDF_CEDULA_RECHAZO."
-        )
-
-        if "ID" not in df_seg.columns:
-
-            st.warning(
-                "No encontré la columna ID para actualizar evidencias."
-            )
-
-        else:
-
-            df_cedulas = df_seg.copy()
-
-            if "PDF_CEDULA_RECHAZO" in df_cedulas.columns:
-
-                solo_sin_cedula = st.checkbox(
-                    "Mostrar solo incidencias sin cédula de rechazo",
-                    value=True
-                )
-
-                if solo_sin_cedula:
-
-                    df_cedulas = df_cedulas[
-                        df_cedulas["PDF_CEDULA_RECHAZO"]
-                        .astype(str)
-                        .str.strip()
-                        .replace(
-                            {
-                                "nan": "",
-                                "None": "",
-                                "none": "",
-                                "NULL": "",
-                                "null": ""
-                            }
-                        )
-                        .eq("")
-                    ].copy()
-
-            if df_cedulas.empty:
-
-                st.info(
-                    "No hay incidencias pendientes de cédula con los filtros actuales."
-                )
-
-            else:
-
-                df_cedulas["_OPCION_CEDULA"] = df_cedulas.apply(
-                    lambda x: f"ID {x.get('ID', '')} | OS {x.get('ORDEN', x.get('ORDEN_BUSCADA', ''))} | {x.get('ENTIDAD', '')} | {x.get('CLAVE_CNIS', '')} | {x.get('TIPO_INCIDENCIA', '')}",
-                    axis=1
-                )
-
-                opcion_cedula = st.selectbox(
-                    "Incidencia a actualizar",
-                    df_cedulas["_OPCION_CEDULA"].astype(str).tolist(),
-                    key="select_cedula_rechazo"
-                )
-
-                fila_cedula = df_cedulas[
-                    df_cedulas["_OPCION_CEDULA"].astype(str) == str(opcion_cedula)
-                ].iloc[0]
-
-                archivo_cedula = st.file_uploader(
-                    "Cédula de rechazo en PDF",
-                    type=[
-                        "pdf"
-                    ],
-                    key="cedula_rechazo_incidencia_previa"
-                )
-
-                if st.button(
-                    "📎 Subir cédula de rechazo",
-                    use_container_width=True
-                ):
-
-                    if archivo_cedula is None:
-
-                        st.error(
-                            "Primero selecciona un archivo PDF."
-                        )
-
-                    else:
-
-                        ok = actualizar_evidencia_incidencia(
-                            fila_cedula.get("ID", ""),
-                            archivo_cedula,
-                            "cedula",
-                            fila_cedula.get("ORDEN", fila_cedula.get("ORDEN_BUSCADA", "")),
-                            fila_cedula.get("ENTIDAD", "SIN_ESTADO"),
-                            fila_cedula.get("CLUES_DESTINO", "SIN_CLUES")
-                        )
-
-                        if ok:
-
-                            st.success(
-                                "Cédula de rechazo agregada correctamente a la incidencia."
-                            )
-
-                            try:
-
-                                generar_respaldo_drive()
-
-                            except Exception:
-
-                                pass
-
-                            st.rerun()
-
-                        else:
-
-                            st.error(
-                                "No se pudo subir la cédula. Revisa el archivo PDF o las credenciales de Drive."
-                            )
-
         with st.expander(
-            "📎 Agregar otro archivo a una incidencia previa"
+            "📎 Agregar archivo a una incidencia previa"
         ):
 
             if "ID" not in df_seg.columns:
@@ -5757,8 +7398,7 @@ elif menu == "Seguimiento":
 
                 opcion_archivo = st.selectbox(
                     "Incidencia a actualizar",
-                    df_archivos["_OPCION_ARCHIVO"].astype(str).tolist(),
-                    key="select_otro_archivo"
+                    df_archivos["_OPCION_ARCHIVO"].astype(str).tolist()
                 )
 
                 fila_archivo = df_archivos[
@@ -5770,8 +7410,7 @@ elif menu == "Seguimiento":
                     [
                         "Cédula rechazo",
                         "Correo seguimiento"
-                    ],
-                    key="tipo_otro_archivo"
+                    ]
                 )
 
                 archivo_nuevo = st.file_uploader(
@@ -5850,7 +7489,7 @@ elif menu == "Cédulas de rechazo":
             .str.strip()
         )
         df_cedulas = df_cedulas[
-            enlaces.apply(es_enlace_cedula_dashboard)
+            ~enlaces.str.lower().isin(["", "nan", "none", "null"])
         ].copy()
 
         if df_cedulas.empty:
