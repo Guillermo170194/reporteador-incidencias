@@ -566,7 +566,7 @@ def homologar_atribuible(valor):
 
 RESPONSABLES_FIJOS = {
     "YAIR OSWALDO GONZÁLEZ GARCÍA": [
-        "ALEJANDRA PAOLA HUERTA FERNANDEZ",
+        "YENNY ZORAID ARROYO GONZÁLEZ",
         "EMILY ESTEFANÍA SÁNCHEZ HERNÁNDEZ",
         "JESUS RICANO MURRIETA"
     ],
@@ -2616,6 +2616,7 @@ COLUMNAS_BASE_URGENCIAS_ORDENES = [
     "FECHA_REGISTRO",
     "ID_INCIDENCIA",
     "OBSERVACIONES",
+    "PDF_CORREO_SEGUIMIENTO",
     "FECHA_ACTUALIZACION_BASE"
 ]
 
@@ -2629,6 +2630,7 @@ COLUMNAS_BASE_URGENCIAS_SIN_ORDEN = [
     "ID_INCIDENCIA",
     "MOTIVO",
     "OBSERVACIONES",
+    "PDF_CORREO_SEGUIMIENTO",
     "FECHA_ACTUALIZACION_BASE"
 ]
 
@@ -2747,6 +2749,36 @@ def entidades_urgencia_coinciden(valor_a, valor_b):
         entidad_a in entidad_b
         or entidad_b in entidad_a
     )
+
+
+def homologar_entidad_urgencia_desde_compendio(
+    compendio,
+    entidad_solicitada
+):
+
+    if compendio is None or compendio.empty:
+
+        return ""
+
+    columnas = columnas_orden_urgencia()["entidad"]
+
+    for _, fila in compendio.iterrows():
+
+        entidad_compendio = limpiar_valor_visual(
+            valor_fila_urgencia(
+                fila,
+                columnas
+            )
+        )
+
+        if entidad_compendio and entidades_urgencia_coinciden(
+            entidad_compendio,
+            entidad_solicitada
+        ):
+
+            return entidad_compendio
+
+    return ""
 
 
 def consultar_compendio_por_clave_urgencia(clave):
@@ -3053,7 +3085,9 @@ def construir_resultado_orden_urgencia(
 
     return {
         "CLAVE_CNIS": clave,
-        "ENTIDAD": limpiar_valor_visual(entidad_solicitada),
+        "ENTIDAD": entidad_compendio or limpiar_valor_visual(
+            entidad_solicitada
+        ),
         "ENTIDAD_COMPENDIO": entidad_compendio,
         "ORDEN_SUMINISTRO": orden,
         "ESTATUS_BASE": limpiar_valor_visual(
@@ -3165,10 +3199,30 @@ def buscar_ordenes_urgencia(clave, entidad):
             "total_clave": 0,
             "total_entidad": 0,
             "total_con_orden": 0,
-            "sin_orden": True
+            "sin_orden": False,
+            "clave_valida": False,
+            "entidad_homologada": ""
         }
 
     columnas = columnas_orden_urgencia()
+    entidad_homologada = homologar_entidad_urgencia_desde_compendio(
+        compendio,
+        entidad
+    )
+
+    if not entidad_homologada:
+
+        return {
+            "ordenes": vacio,
+            "ordenes_entregadas": pd.DataFrame(),
+            "total_clave": len(compendio),
+            "total_entidad": 0,
+            "total_con_orden": 0,
+            "sin_orden": False,
+            "clave_valida": True,
+            "entidad_homologada": ""
+        }
+
     filas_entidad = []
 
     for _, fila in compendio.iterrows():
@@ -3205,7 +3259,7 @@ def buscar_ordenes_urgencia(clave, entidad):
         registro = construir_resultado_orden_urgencia(
             fila,
             clave,
-            entidad
+            entidad_homologada
         )
 
         registro["_ORDEN_NORMALIZADA"] = normalizar_orden(
@@ -3228,7 +3282,9 @@ def buscar_ordenes_urgencia(clave, entidad):
             "total_clave": len(compendio),
             "total_entidad": len(filas_entidad),
             "total_con_orden": 0,
-            "sin_orden": True
+            "sin_orden": True,
+            "clave_valida": True,
+            "entidad_homologada": entidad_homologada
         }
 
     elegibles = []
@@ -3301,7 +3357,9 @@ def buscar_ordenes_urgencia(clave, entidad):
         "total_clave": len(compendio),
         "total_entidad": len(filas_entidad),
         "total_con_orden": len(elegibles) + len(entregadas),
-        "sin_orden": len(registros) == 0
+        "sin_orden": len(registros) == 0,
+        "clave_valida": True,
+        "entidad_homologada": entidad_homologada
     }
 
 
@@ -3376,7 +3434,8 @@ def construir_registro_urgencia(
     registro_orden,
     fecha,
     responsable,
-    observaciones=""
+    observaciones="",
+    ruta_pdf=""
 ):
 
     registro = construir_registro_incidencia(
@@ -3388,7 +3447,7 @@ def construir_registro_urgencia(
         responsable,
         observaciones_urgencia(fecha, observaciones),
         "",
-        ""
+        ruta_pdf
     )
 
     registro["ORIGEN_REGISTRO"] = "URGENCIAS"
@@ -3401,7 +3460,8 @@ def construir_registro_urgencia_sin_orden(
     entidad,
     fecha,
     responsable,
-    observaciones=""
+    observaciones="",
+    ruta_pdf=""
 ):
 
     texto_observaciones = (
@@ -3442,7 +3502,7 @@ def construir_registro_urgencia_sin_orden(
         "RESPONSABLE": responsable,
         "OBSERVACIONES": texto_observaciones,
         "PDF_CEDULA_RECHAZO": "",
-        "PDF_CORREO_SEGUIMIENTO": ""
+        "PDF_CORREO_SEGUIMIENTO": ruta_pdf
     }
 
 
@@ -4564,7 +4624,8 @@ def preparar_fila_base_urgencia_orden(
     fecha,
     responsable,
     incidencia_id,
-    observaciones
+    observaciones,
+    pdf_link=""
 ):
 
     fecha_visual = fecha_a_texto(
@@ -4608,6 +4669,7 @@ def preparar_fila_base_urgencia_orden(
         ),
         "ID_INCIDENCIA": incidencia_id,
         "OBSERVACIONES": observaciones,
+        "PDF_CORREO_SEGUIMIENTO": pdf_link,
         "FECHA_ACTUALIZACION_BASE": fecha_a_texto(
             datetime.now()
         )
@@ -4620,7 +4682,8 @@ def preparar_fila_base_urgencia_sin_orden(
     fecha,
     responsable,
     incidencia_id,
-    observaciones
+    observaciones,
+    pdf_link=""
 ):
 
     fecha_visual = fecha_a_texto(
@@ -4639,6 +4702,7 @@ def preparar_fila_base_urgencia_sin_orden(
         "ID_INCIDENCIA": incidencia_id,
         "MOTIVO": "No se encontró orden para la clave y entidad",
         "OBSERVACIONES": observaciones,
+        "PDF_CORREO_SEGUIMIENTO": pdf_link,
         "FECHA_ACTUALIZACION_BASE": fecha_a_texto(
             datetime.now()
         )
@@ -4652,7 +4716,8 @@ def registrar_urgencia_completa(
     responsable,
     observaciones,
     resultado_busqueda,
-    incidencias_actuales
+    incidencias_actuales,
+    archivo_pdf=None
 ):
 
     ordenes = resultado_busqueda.get(
@@ -4667,11 +4732,35 @@ def registrar_urgencia_completa(
         )
     )
 
+    if not resultado_busqueda.get(
+        "clave_valida",
+        True
+    ):
+
+        return {
+            "guardadas": 0,
+            "duplicadas": 0,
+            "errores": [
+                "La clave no existe en el compendio. No se puede registrar la urgencia."
+            ],
+            "drive": None,
+            "drive_incidencias": "",
+            "ordenes_no_entregadas": 0,
+            "sin_orden": 0
+        }
+
+    entidad_homologada = resultado_busqueda.get(
+        "entidad_homologada",
+        ""
+    ) or entidad
+
     guardadas = 0
     duplicadas = 0
     errores = []
     filas_base_ordenes = []
     filas_base_sin_orden = []
+    pdf_link = ""
+    pdf_intentado = False
 
     if not ordenes.empty:
 
@@ -4702,7 +4791,8 @@ def registrar_urgencia_completa(
                         observaciones_urgencia(
                             fecha,
                             observaciones
-                        )
+                        ),
+                        pdf_link
                     )
                 )
 
@@ -4710,11 +4800,23 @@ def registrar_urgencia_completa(
 
             try:
 
+                if archivo_pdf is not None and not pdf_intentado:
+
+                    pdf_intentado = True
+                    pdf_link = subir_pdf_evidencia_drive(
+                        archivo_pdf,
+                        orden or clave,
+                        "urgencia",
+                        entidad_homologada,
+                        registro.get("CLUES_DESTINO", "") or "SIN_CLUES"
+                    )
+
                 nueva = construir_registro_urgencia(
                     registro,
                     fecha,
                     responsable,
-                    observaciones
+                    observaciones,
+                    pdf_link
                 )
 
                 incidencia_id = guardar_incidencia(
@@ -4732,7 +4834,8 @@ def registrar_urgencia_completa(
                         observaciones_urgencia(
                             fecha,
                             observaciones
-                        )
+                        ),
+                        pdf_link
                     )
                 )
 
@@ -4757,14 +4860,15 @@ def registrar_urgencia_completa(
             filas_base_sin_orden.append(
                 preparar_fila_base_urgencia_sin_orden(
                     clave,
-                    entidad,
+                    entidad_homologada,
                     fecha,
                     responsable,
                     "",
                     observaciones_urgencia(
                         fecha,
                         observaciones
-                    )
+                    ),
+                    pdf_link
                 )
             )
 
@@ -4772,12 +4876,24 @@ def registrar_urgencia_completa(
 
             try:
 
+                if archivo_pdf is not None and not pdf_intentado:
+
+                    pdf_intentado = True
+                    pdf_link = subir_pdf_evidencia_drive(
+                        archivo_pdf,
+                        clave,
+                        "urgencia",
+                        entidad_homologada,
+                        "SIN_CLUES"
+                    )
+
                 nueva = construir_registro_urgencia_sin_orden(
                     clave,
-                    entidad,
+                    entidad_homologada,
                     fecha,
                     responsable,
-                    observaciones
+                    observaciones,
+                    pdf_link
                 )
 
                 incidencia_id = guardar_incidencia(
@@ -4789,14 +4905,15 @@ def registrar_urgencia_completa(
                 filas_base_sin_orden.append(
                     preparar_fila_base_urgencia_sin_orden(
                         clave,
-                        entidad,
+                        entidad_homologada,
                         fecha,
                         responsable,
                         incidencia_id,
                         observaciones_urgencia(
                             fecha,
                             observaciones
-                        )
+                        ),
+                        pdf_link
                     )
                 )
 
@@ -6989,6 +7106,15 @@ elif menu == "Urgencias":
         key="urgencias_observaciones"
     )
 
+    pdf_urgencia = st.file_uploader(
+        "📎 Adjuntar PDF de correo o evidencia",
+        type=[
+            "pdf"
+        ],
+        key="urgencias_pdf",
+        help="Selecciona el correo o la evidencia que respalda la urgencia."
+    )
+
     buscar_urgencia = st.button(
         "🔎 Consultar órdenes de la clave",
         use_container_width=True,
@@ -7085,6 +7211,33 @@ elif menu == "Urgencias":
             len(ordenes_entregadas_urgencia)
         )
 
+        if not resultado_urgencia.get(
+            "clave_valida",
+            False
+        ):
+
+            st.error(
+                "La clave capturada no existe en el compendio. "
+                "No se puede registrar la urgencia."
+            )
+
+        elif not resultado_urgencia.get(
+            "entidad_homologada",
+            ""
+        ):
+
+            st.error(
+                "La clave existe en el compendio, pero el estado capturado "
+                "no coincide con una entidad homologada."
+            )
+
+        else:
+
+            st.success(
+                "Estado homologado desde el compendio: "
+                f"{resultado_urgencia['entidad_homologada']}"
+            )
+
         if not ordenes_urgencia.empty:
 
             st.success(
@@ -7152,8 +7305,12 @@ elif menu == "Urgencias":
                 )
 
         puede_guardar_urgencia = (
-            not ordenes_urgencia.empty
-            or resultado_urgencia.get("sin_orden", False)
+            resultado_urgencia.get("clave_valida", False)
+            and bool(resultado_urgencia.get("entidad_homologada", ""))
+            and (
+                not ordenes_urgencia.empty
+                or resultado_urgencia.get("sin_orden", False)
+            )
         )
 
         if puede_guardar_urgencia:
@@ -7174,12 +7331,16 @@ elif menu == "Urgencias":
 
                     resultado_guardado_urgencia = registrar_urgencia_completa(
                         clave_urgencia,
-                        entidad_urgencia,
+                        resultado_urgencia.get(
+                            "entidad_homologada",
+                            entidad_urgencia
+                        ),
                         fecha_urgencia,
                         responsable_urgencia,
                         observaciones_urgencia_captura,
                         resultado_urgencia,
-                        incidencias
+                        incidencias,
+                        pdf_urgencia
                     )
 
                 if resultado_guardado_urgencia.get("guardadas", 0) > 0:
