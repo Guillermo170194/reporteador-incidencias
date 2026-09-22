@@ -2404,6 +2404,11 @@ def preparar_datos_exportacion_urgencias(incidencias):
     ``TIPO_INCIDENCIA = URGENCIA``.  La tabla de incidencias no guarda una
     columna independiente para ``PENDIENTE_ENTREGA``; por eso se calcula al
     exportar a partir de piezas emitidas y piezas entregadas en la CLUES.
+
+    La unidad de una urgencia es la pareja clave CNIS + entidad. Las filas
+    inactivas, canceladas o recolectadas no forman parte de las urgencias
+    vigentes. Una clave pasa a ``Atendida`` cuando sus órdenes activas ya no
+    tienen piezas pendientes y existe una entrega registrada.
     """
 
     columnas_salida = [
@@ -2427,6 +2432,10 @@ def preparar_datos_exportacion_urgencias(incidencias):
         "PIEZAS_ENTREGADAS_CLUES",
         "PENDIENTE_ENTREGA",
         "ESTATUS_ENTREGA_ENTIDAD",
+        "ESTATUS_URGENCIA",
+        "FECHA_ATENCION",
+        "NUM_ORDENES_URGENCIA",
+        "ORDENES_PENDIENTES",
         "ESTATUS_SEGUIMIENTO",
         "ESTATUS_INCIDENCIA",
         "RESPONSABLE",
@@ -2440,7 +2449,9 @@ def preparar_datos_exportacion_urgencias(incidencias):
     if incidencias is None or not isinstance(incidencias, pd.DataFrame):
         return {
             "capturadas": vacio,
+            "claves": vacio,
             "pendientes": vacio,
+            "atendidas": vacio,
             "sin_orden": vacio,
             "columnas": columnas_salida
         }
@@ -2450,7 +2461,9 @@ def preparar_datos_exportacion_urgencias(incidencias):
     if "TIPO_INCIDENCIA" not in df.columns:
         return {
             "capturadas": vacio,
+            "claves": vacio,
             "pendientes": vacio,
+            "atendidas": vacio,
             "sin_orden": vacio,
             "columnas": columnas_salida
         }
@@ -2467,7 +2480,9 @@ def preparar_datos_exportacion_urgencias(incidencias):
     if df.empty:
         return {
             "capturadas": vacio,
+            "claves": vacio,
             "pendientes": vacio,
+            "atendidas": vacio,
             "sin_orden": vacio,
             "columnas": columnas_salida
         }
@@ -2491,10 +2506,17 @@ def preparar_datos_exportacion_urgencias(incidencias):
         "GRUPO_TERAPEUTICO": "",
         "OPERADOR_LOGISTICO": "",
         "ESTATUS_BASE": "",
+        "ORIGEN_COMPENDIO": "",
+        "ORIGEN": "",
         "PIEZAS_EMITIDAS": "",
         "PIEZAS_RECIBIDAS_OL": "",
         "PIEZAS_ENTREGADAS_CLUES": "",
         "ESTATUS_ENTREGA_ESTADO": "",
+        "FECHA_ENTREGA": "",
+        "FECHA_ENTREGA_CLUES": "",
+        "FECHA_RECEPCION": "",
+        "FECHA_RECEPCION_CLUES": "",
+        "FECHA_ATENCION": "",
         "ESTATUS_SEGUIMIENTO": "",
         "ESTATUS_INCIDENCIA": "",
         "RESPONSABLE": "",
@@ -2564,7 +2586,9 @@ def preparar_datos_exportacion_urgencias(incidencias):
                 "ESTATUS_ENTREGA_ENTIDAD",
                 "ESTATUS_SEGUIMIENTO",
                 "ESTATUS_BASE",
-                "ESTATUS_INCIDENCIA"
+                "ESTATUS_INCIDENCIA",
+                "ORIGEN_COMPENDIO",
+                "ORIGEN"
             ]
         ]
         .fillna("")
@@ -2583,31 +2607,96 @@ def preparar_datos_exportacion_urgencias(incidencias):
         na=False
     )
 
-    completa = estatus_combinado.str.contains(
-        r"ENTREGADA COMPLETA|COMPLETA-ENTREGADO|COMPLETA",
-        regex=True,
-        na=False
-    ) & ~estatus_combinado.str.contains(
-        r"INCOMPLETA",
-        regex=True,
-        na=False
-    )
-
     texto_pendiente = estatus_combinado.str.contains(
         r"NO ENTREG|SIN ENTREG|PENDIENTE|FALTANTE|PARCIAL|PROGRAMADA|INCOMPLETA",
         regex=True,
         na=False
     )
 
+    # El seguimiento puede actualizarse después de la captura y dejar el
+    # texto histórico ``NO ENTREGADA`` en otra columna. Un estatus explícito
+    # de entrega completa o piezas entregadas sin saldo pendiente prevalece
+    # sobre ese texto anterior.
+    entrega_confirmada = (
+        entregadas_num.gt(0)
+        & ~df["PENDIENTE_ENTREGA"].gt(0)
+    ) | estatus_combinado.str.contains(
+        r"ENTREGADA COMPLETA|COMPLETA[- ]ENTREGADO|COMPLETO[- ]ENTREGADO",
+        regex=True,
+        na=False
+    )
+    texto_pendiente_efectivo = texto_pendiente & ~entrega_confirmada
+
+    # Algunas versiones del compendio incluyen fecha de entrega o recepción.
+    # Se conserva cuando existe para documentar la atención posterior a la
+    # captura. Si no existe, el estatus y las piezas son la fuente de verdad:
+    # la orden sólo pudo capturarse como urgencia cuando aún no tenía entrega.
+    if "FECHA_ATENCION" not in df.columns:
+        df["FECHA_ATENCION"] = ""
+    for columna_fecha in [
+        "FECHA_ENTREGA",
+        "FECHA_ENTREGA_CLUES",
+        "FECHA_RECEPCION",
+        "FECHA_RECEPCION_CLUES",
+        "FECHA_ATENCION"
+    ]:
+        if columna_fecha not in df.columns:
+            continue
+        valores_fecha = df[columna_fecha].apply(limpiar_valor_visual)
+        vacias = df["FECHA_ATENCION"].apply(limpiar_valor_visual).eq("")
+        df.loc[vacias, "FECHA_ATENCION"] = valores_fecha.loc[vacias]
+
+    pendiente_cuantificado = df["PENDIENTE_ENTREGA"].gt(0)
+    entrega_completa = (
+        ~cancelada
+        & ~texto_pendiente_efectivo
+        & ~pendiente_cuantificado
+        & (
+            entregadas_num.gt(0)
+            | estatus_combinado.str.contains(
+                r"ENTREGAD[OA]|COMPLETA",
+                regex=True,
+                na=False
+            )
+        )
+    )
+
+    # Si el origen aporta ambas fechas, no se permite que una entrega previa
+    # a la captura atienda retroactivamente la urgencia.
+    try:
+        fecha_captura_dt = pd.to_datetime(
+            df["FECHA_URGENCIA"],
+            errors="coerce"
+        )
+        fecha_atencion_dt = pd.to_datetime(
+            df["FECHA_ATENCION"],
+            errors="coerce"
+        )
+        fecha_atencion_anterior = (
+            fecha_captura_dt.notna()
+            & fecha_atencion_dt.notna()
+            & (
+                fecha_atencion_dt.dt.normalize()
+                < fecha_captura_dt.dt.normalize()
+            )
+        )
+        entrega_completa = entrega_completa & ~fecha_atencion_anterior
+    except Exception:
+        # Los formatos de fecha históricos son heterogéneos; si no se pueden
+        # comparar, se conserva la regla segura de estatus y piezas.
+        pass
+
     df["_PENDIENTE"] = (
         tiene_orden
         & ~cancelada
-        & ~completa
+        & ~entrega_completa
         & (
             df["PENDIENTE_ENTREGA"].gt(0)
-            | texto_pendiente
+            | texto_pendiente_efectivo
         )
     )
+    df["_ATENDIDA"] = tiene_orden & entrega_completa
+    df["_CANCELADA"] = cancelada
 
     # Una misma urgencia puede conservarse en Supabase con más de un registro
     # al actualizar una emisión. Mantén la última fila por ID cuando exista.
@@ -2631,6 +2720,80 @@ def preparar_datos_exportacion_urgencias(incidencias):
         limpiar_valor_visual
     ).ne("")
 
+    df["_CLAVE_NORMALIZADA"] = df["CLAVE_CNIS"].apply(
+        compactar_clave_urgencia
+    )
+    df["_ENTIDAD_NORMALIZADA"] = df["ENTIDAD"].apply(
+        normalizar_entidad_urgencia
+    )
+    df["_LLAVE_URGENCIA"] = (
+        df["_CLAVE_NORMALIZADA"]
+        + "|"
+        + df["_ENTIDAD_NORMALIZADA"]
+    )
+    df["_CLAVE_VALIDA"] = (
+        df["_CLAVE_NORMALIZADA"].ne("")
+        & df["_ENTIDAD_NORMALIZADA"].ne("")
+    )
+    df_activas = df.loc[~df["_CANCELADA"]].copy()
+
+    # Una misma clave/entidad puede tener varias órdenes. La vista de
+    # urgencias es una fila por clave/entidad, mientras que pendientes sigue
+    # siendo una fila por orden para poder enviarlas a surtimiento.
+    filas_claves = []
+    for _, grupo in df_activas.loc[
+        df_activas["_CLAVE_VALIDA"]
+    ].groupby(
+        "_LLAVE_URGENCIA",
+        sort=False
+    ):
+        representante = grupo.iloc[0].copy()
+        ordenes = []
+        for orden in grupo["ORDEN_SUMINISTRO"].apply(limpiar_valor_visual):
+            if orden and orden not in ordenes:
+                ordenes.append(orden)
+
+        pendientes_grupo = int(grupo["_PENDIENTE"].sum())
+        atendidas_grupo = int(grupo["_ATENDIDA"].sum())
+        tiene_orden_grupo = bool(
+            grupo["ORDEN_SUMINISTRO"].apply(
+                limpiar_valor_visual
+            ).ne("").any()
+        )
+
+        if pendientes_grupo:
+            estatus_urgencia = "Pendiente"
+        elif atendidas_grupo and tiene_orden_grupo:
+            estatus_urgencia = "Atendida"
+        else:
+            estatus_urgencia = "Revisar con emisión"
+
+        representante["ORDEN_SUMINISTRO"] = "; ".join(ordenes)
+        representante["NUM_ORDENES_URGENCIA"] = len(ordenes)
+        representante["ORDENES_PENDIENTES"] = pendientes_grupo
+        representante["ESTATUS_URGENCIA"] = estatus_urgencia
+
+        for columna_cantidad in [
+            "PIEZAS_EMITIDAS",
+            "PIEZAS_RECIBIDAS_OL",
+            "PIEZAS_ENTREGADAS_CLUES",
+            "PENDIENTE_ENTREGA"
+        ]:
+            representante[columna_cantidad] = grupo[columna_cantidad].apply(
+                convertir_numero
+            ).sum()
+
+        fechas_atencion = grupo["FECHA_ATENCION"].apply(
+            limpiar_valor_visual
+        )
+        fechas_atencion = fechas_atencion[fechas_atencion.ne("")]
+        if not fechas_atencion.empty:
+            representante["FECHA_ATENCION"] = fechas_atencion.iloc[-1]
+
+        filas_claves.append(representante)
+
+    claves_trabajo = pd.DataFrame(filas_claves)
+
     def seleccionar_columnas(trabajo):
         if trabajo is None or trabajo.empty:
             return vacio.copy()
@@ -2640,13 +2803,37 @@ def preparar_datos_exportacion_urgencias(incidencias):
                 resultado[columna] = ""
         return resultado[columnas_salida].copy()
 
-    capturadas = seleccionar_columnas(df)
+    capturadas = seleccionar_columnas(df_activas)
+    claves = seleccionar_columnas(claves_trabajo)
     pendientes = seleccionar_columnas(
-        df[df["_PENDIENTE"]]
+        df_activas[df_activas["_PENDIENTE"]]
     )
     sin_orden = seleccionar_columnas(
-        df[~tiene_orden]
+        df_activas[
+            ~df_activas["ORDEN_SUMINISTRO"].apply(
+                limpiar_valor_visual
+            ).ne("")
+        ]
     )
+    atendidas = seleccionar_columnas(
+        claves_trabajo[
+            claves_trabajo["ESTATUS_URGENCIA"].eq("Atendida")
+        ]
+        if not claves_trabajo.empty
+        else claves_trabajo
+    )
+
+    if not claves.empty:
+        claves = claves.sort_values(
+            ["ENTIDAD", "FECHA_URGENCIA", "CLAVE_CNIS"],
+            kind="stable"
+        )
+
+    if not atendidas.empty:
+        atendidas = atendidas.sort_values(
+            ["ENTIDAD", "FECHA_ATENCION", "CLAVE_CNIS"],
+            kind="stable"
+        )
 
     if not pendientes.empty:
         pendientes = pendientes.sort_values(
@@ -2656,7 +2843,9 @@ def preparar_datos_exportacion_urgencias(incidencias):
 
     return {
         "capturadas": capturadas,
+        "claves": claves,
         "pendientes": pendientes,
+        "atendidas": atendidas,
         "sin_orden": sin_orden,
         "columnas": columnas_salida
     }
@@ -2680,7 +2869,12 @@ def convertir_excel_urgencias(incidencias):
     else:
         datos = preparar_datos_exportacion_urgencias(incidencias)
     capturadas = datos["capturadas"]
+    claves = datos.get("claves", capturadas)
     pendientes = datos["pendientes"]
+    atendidas = datos.get(
+        "atendidas",
+        pd.DataFrame(columns=claves.columns)
+    )
     sin_orden = datos["sin_orden"]
 
     piezas_pendientes = 0
@@ -2694,8 +2888,9 @@ def convertir_excel_urgencias(incidencias):
     resumen = pd.DataFrame(
         [
             ["Fecha de generación", fecha_a_texto(datetime.now())],
-            ["Urgencias capturadas", len(capturadas)],
+            ["Urgencias capturadas (claves por entidad)", len(claves)],
             ["Órdenes pendientes de entrega", len(pendientes)],
+            ["Claves atendidas", len(atendidas)],
             ["Piezas pendientes (cuando están cuantificadas)", piezas_pendientes],
             ["Solicitudes sin orden / revisar emisión", len(sin_orden)]
         ],
@@ -2718,10 +2913,15 @@ def convertir_excel_urgencias(incidencias):
             index=False,
             sheet_name="Pendientes_Entrega"
         )
-        capturadas.to_excel(
+        claves.to_excel(
             writer,
             index=False,
             sheet_name="Urgencias_Capturadas"
+        )
+        atendidas.to_excel(
+            writer,
+            index=False,
+            sheet_name="Atendidas"
         )
         sin_orden.to_excel(
             writer,
@@ -2744,6 +2944,7 @@ def convertir_excel_urgencias(incidencias):
             "Resumen",
             "Pendientes_Entrega",
             "Urgencias_Capturadas",
+            "Atendidas",
             "Sin_Orden"
         ]:
             ws = writer.sheets[nombre_hoja]
@@ -2782,6 +2983,7 @@ def convertir_excel_urgencias(incidencias):
         for nombre_hoja in [
             "Pendientes_Entrega",
             "Urgencias_Capturadas",
+            "Atendidas",
             "Sin_Orden"
         ]:
             ws = writer.sheets[nombre_hoja]
@@ -4649,13 +4851,12 @@ def cargar_urgencias_para_exportacion():
     """Consolida urgencias de Supabase y de la base histórica de Drive."""
 
     fuentes = []
+    incidencias_supabase = pd.DataFrame()
 
     try:
         incidencias_supabase = cargar_incidencias()
-        if incidencias_supabase is not None and not incidencias_supabase.empty:
-            fuentes.append(incidencias_supabase)
     except Exception:
-        pass
+        incidencias_supabase = pd.DataFrame()
 
     # Algunas capturas históricas pueden existir en BASE_URGENCIAS aunque
     # Supabase se haya actualizado en otro proyecto o no tenga lectura pública.
@@ -4690,6 +4891,12 @@ def cargar_urgencias_para_exportacion():
         # La exportación debe seguir funcionando con Supabase aunque Drive
         # esté temporalmente sin conexión.
         pass
+
+    # Supabase es la fuente operativa y debe quedar al final para que, al
+    # deduplicar por ID, su estatus actualizado (incluidas las entregas) tenga
+    # prioridad sobre la copia histórica de Drive.
+    if incidencias_supabase is not None and not incidencias_supabase.empty:
+        fuentes.append(incidencias_supabase)
 
     if not fuentes:
         return preparar_datos_exportacion_urgencias(
@@ -8616,19 +8823,22 @@ elif menu == "Urgencias":
 
         datos_exportacion_urgencias = cargar_urgencias_para_exportacion()
         urgencias_capturadas_export = datos_exportacion_urgencias[
-            "capturadas"
+            "claves"
         ]
         ordenes_pendientes_export = datos_exportacion_urgencias[
             "pendientes"
+        ]
+        urgencias_atendidas_export = datos_exportacion_urgencias[
+            "atendidas"
         ]
         urgencias_sin_orden_export = datos_exportacion_urgencias[
             "sin_orden"
         ]
 
-        m_export_1, m_export_2, m_export_3 = st.columns(3)
+        m_export_1, m_export_2, m_export_3, m_export_4 = st.columns(4)
 
         m_export_1.metric(
-            "Urgencias capturadas",
+            "Urgencias (claves)",
             len(urgencias_capturadas_export)
         )
 
@@ -8638,8 +8848,18 @@ elif menu == "Urgencias":
         )
 
         m_export_3.metric(
+            "Atendidas (claves)",
+            len(urgencias_atendidas_export)
+        )
+
+        m_export_4.metric(
             "Sin orden / revisar emisión",
             len(urgencias_sin_orden_export)
+        )
+
+        st.caption(
+            "Una urgencia equivale a una clave CNIS por entidad; las filas "
+            "inactivas o canceladas no se cuentan."
         )
 
         c_export_1, c_export_2 = st.columns(2)
@@ -8659,10 +8879,10 @@ elif menu == "Urgencias":
             )
 
             st.download_button(
-                label="⬇️ Descargar Excel de urgencias pendientes",
+                label="⬇️ Descargar Excel de urgencias (pendientes y atendidas)",
                 data=excel_urgencias,
                 file_name=(
-                    f"urgencias_capturadas_pendientes_{fecha_hoy_sistema()}.xlsx"
+                    f"urgencias_pendientes_atendidas_{fecha_hoy_sistema()}.xlsx"
                 ),
                 mime=(
                     "application/vnd.openxmlformats-officedocument."
