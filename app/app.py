@@ -2397,6 +2397,403 @@ def convertir_excel(
     return salida
 
 
+def preparar_datos_exportacion_urgencias(incidencias):
+    """Prepara las urgencias capturadas y separa las órdenes pendientes.
+
+    Las urgencias se almacenan en la tabla ``incidencias`` con
+    ``TIPO_INCIDENCIA = URGENCIA``.  La tabla de incidencias no guarda una
+    columna independiente para ``PENDIENTE_ENTREGA``; por eso se calcula al
+    exportar a partir de piezas emitidas y piezas entregadas en la CLUES.
+    """
+
+    columnas_salida = [
+        "FECHA_URGENCIA",
+        "FECHA_REGISTRO",
+        "ENTIDAD",
+        "CLAVE_CNIS",
+        "ORDEN_SUMINISTRO",
+        "CLUES_DESTINO",
+        "UNIDAD_DESTINO",
+        "ALMACEN_CLUES_DESTINO",
+        "PROVEEDOR",
+        "DESCRIPCION",
+        "TIPO_ENTREGA",
+        "TIPO_RED",
+        "GRUPO_TERAPEUTICO",
+        "OPERADOR_LOGISTICO",
+        "ESTATUS_BASE",
+        "PIEZAS_EMITIDAS",
+        "PIEZAS_RECIBIDAS_OL",
+        "PIEZAS_ENTREGADAS_CLUES",
+        "PENDIENTE_ENTREGA",
+        "ESTATUS_ENTREGA_ENTIDAD",
+        "ESTATUS_SEGUIMIENTO",
+        "ESTATUS_INCIDENCIA",
+        "RESPONSABLE",
+        "OBSERVACIONES",
+        "PDF_CORREO_SEGUIMIENTO",
+        "ID"
+    ]
+
+    vacio = pd.DataFrame(columns=columnas_salida)
+
+    if incidencias is None or not isinstance(incidencias, pd.DataFrame):
+        return {
+            "capturadas": vacio,
+            "pendientes": vacio,
+            "sin_orden": vacio,
+            "columnas": columnas_salida
+        }
+
+    df = incidencias.copy()
+
+    if "TIPO_INCIDENCIA" not in df.columns:
+        return {
+            "capturadas": vacio,
+            "pendientes": vacio,
+            "sin_orden": vacio,
+            "columnas": columnas_salida
+        }
+
+    df = df[
+        df["TIPO_INCIDENCIA"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .eq("URGENCIA")
+    ].copy()
+
+    if df.empty:
+        return {
+            "capturadas": vacio,
+            "pendientes": vacio,
+            "sin_orden": vacio,
+            "columnas": columnas_salida
+        }
+
+    # Asegura encabezados que pueden faltar en registros antiguos.
+    defaults = {
+        "ID": "",
+        "FECHA_REGISTRO": "",
+        "ENTIDAD": "",
+        "CLAVE_CNIS": "",
+        "ORDEN": "",
+        "orden_suministro": "",
+        "ORDEN_BUSCADA": "",
+        "CLUES_DESTINO": "",
+        "UNIDAD_DESTINO": "",
+        "ALMACEN_CLUES_DESTINO": "",
+        "PROVEEDOR": "",
+        "DESCRIPCION": "",
+        "TIPO_ENTREGA": "",
+        "TIPO_RED": "",
+        "GRUPO_TERAPEUTICO": "",
+        "OPERADOR_LOGISTICO": "",
+        "ESTATUS_BASE": "",
+        "PIEZAS_EMITIDAS": "",
+        "PIEZAS_RECIBIDAS_OL": "",
+        "PIEZAS_ENTREGADAS_CLUES": "",
+        "ESTATUS_ENTREGA_ESTADO": "",
+        "ESTATUS_SEGUIMIENTO": "",
+        "ESTATUS_INCIDENCIA": "",
+        "RESPONSABLE": "",
+        "OBSERVACIONES": "",
+        "PDF_CORREO_SEGUIMIENTO": ""
+    }
+
+    for columna, valor in defaults.items():
+        if columna not in df.columns:
+            df[columna] = valor
+
+    # Conserva la fecha real de solicitud, que se escribe dentro de
+    # OBSERVACIONES como FECHA_URGENCIA=AAAA-MM-DD.
+    df["FECHA_URGENCIA"] = df.apply(
+        obtener_fecha_urgencia_registro,
+        axis=1
+    )
+
+    def primer_valor_fila(fila, columnas):
+        for columna in columnas:
+            valor = limpiar_valor_visual(fila.get(columna, ""))
+            if valor:
+                return valor
+        return ""
+
+    df["ORDEN_SUMINISTRO"] = df.apply(
+        lambda fila: primer_valor_fila(
+            fila,
+            ["ORDEN", "orden_suministro", "ORDEN_BUSCADA"]
+        ),
+        axis=1
+    )
+
+    # Normaliza cantidades sin perder los valores visuales que se muestran
+    # en el Excel.
+    emitidas_num = df["PIEZAS_EMITIDAS"].apply(convertir_numero)
+    entregadas_num = df["PIEZAS_ENTREGADAS_CLUES"].apply(convertir_numero)
+    df["PENDIENTE_ENTREGA"] = (
+        emitidas_num - entregadas_num
+    ).clip(lower=0)
+
+    estatus_existente = df["ESTATUS_ENTREGA_ESTADO"].apply(
+        limpiar_valor_visual
+    )
+    df["ESTATUS_ENTREGA_ENTIDAD"] = estatus_existente
+
+    faltan_estatus = df["ESTATUS_ENTREGA_ENTIDAD"].eq("")
+    if faltan_estatus.any():
+        df.loc[
+            faltan_estatus,
+            "ESTATUS_ENTREGA_ENTIDAD"
+        ] = df.loc[
+            faltan_estatus
+        ].apply(
+            lambda fila: calcular_estatus_piezas(
+                fila.get("PIEZAS_EMITIDAS", ""),
+                fila.get("PIEZAS_ENTREGADAS_CLUES", "")
+            ),
+            axis=1
+        )
+
+    # La combinación de estatus permite detectar pendientes aun cuando un
+    # registro antiguo no tenga capturadas las cantidades.
+    estatus_combinado = (
+        df[
+            [
+                "ESTATUS_ENTREGA_ENTIDAD",
+                "ESTATUS_SEGUIMIENTO",
+                "ESTATUS_BASE",
+                "ESTATUS_INCIDENCIA"
+            ]
+        ]
+        .fillna("")
+        .astype(str)
+        .agg(" | ".join, axis=1)
+        .str.upper()
+    )
+
+    tiene_orden = df["ORDEN_SUMINISTRO"].apply(
+        limpiar_valor_visual
+    ).ne("")
+
+    cancelada = estatus_combinado.str.contains(
+        r"CANCEL|INACTIV|RECOLECT",
+        regex=True,
+        na=False
+    )
+
+    completa = estatus_combinado.str.contains(
+        r"ENTREGADA COMPLETA|COMPLETA-ENTREGADO|COMPLETA",
+        regex=True,
+        na=False
+    ) & ~estatus_combinado.str.contains(
+        r"INCOMPLETA",
+        regex=True,
+        na=False
+    )
+
+    texto_pendiente = estatus_combinado.str.contains(
+        r"NO ENTREG|SIN ENTREG|PENDIENTE|FALTANTE|PARCIAL|PROGRAMADA|INCOMPLETA",
+        regex=True,
+        na=False
+    )
+
+    df["_PENDIENTE"] = (
+        tiene_orden
+        & ~cancelada
+        & ~completa
+        & (
+            df["PENDIENTE_ENTREGA"].gt(0)
+            | texto_pendiente
+        )
+    )
+
+    # Una misma urgencia puede conservarse en Supabase con más de un registro
+    # al actualizar una emisión. Mantén la última fila por ID cuando exista.
+    if "ID" in df.columns:
+        df["_ID_TEXTO"] = df["ID"].apply(limpiar_valor_visual)
+        con_id = df["_ID_TEXTO"].ne("")
+        if con_id.any():
+            df_con_id = df.loc[con_id].drop_duplicates(
+                subset=["_ID_TEXTO"],
+                keep="last"
+            )
+            df_sin_id = df.loc[~con_id]
+            df = pd.concat(
+                [df_con_id, df_sin_id],
+                ignore_index=True
+            )
+
+    # Recalcula la serie después de cualquier deduplicación para conservar el
+    # mismo índice que el DataFrame al separar las solicitudes sin orden.
+    tiene_orden = df["ORDEN_SUMINISTRO"].apply(
+        limpiar_valor_visual
+    ).ne("")
+
+    def seleccionar_columnas(trabajo):
+        if trabajo is None or trabajo.empty:
+            return vacio.copy()
+        resultado = trabajo.copy()
+        for columna in columnas_salida:
+            if columna not in resultado.columns:
+                resultado[columna] = ""
+        return resultado[columnas_salida].copy()
+
+    capturadas = seleccionar_columnas(df)
+    pendientes = seleccionar_columnas(
+        df[df["_PENDIENTE"]]
+    )
+    sin_orden = seleccionar_columnas(
+        df[~tiene_orden]
+    )
+
+    if not pendientes.empty:
+        pendientes = pendientes.sort_values(
+            ["ENTIDAD", "FECHA_URGENCIA", "ORDEN_SUMINISTRO"],
+            kind="stable"
+        )
+
+    return {
+        "capturadas": capturadas,
+        "pendientes": pendientes,
+        "sin_orden": sin_orden,
+        "columnas": columnas_salida
+    }
+
+
+def convertir_excel_urgencias(incidencias):
+    """Genera el concentrado descargable de urgencias y pendientes."""
+
+    datos = preparar_datos_exportacion_urgencias(incidencias)
+    capturadas = datos["capturadas"]
+    pendientes = datos["pendientes"]
+    sin_orden = datos["sin_orden"]
+
+    piezas_pendientes = 0
+    if not pendientes.empty and "PENDIENTE_ENTREGA" in pendientes.columns:
+        piezas_pendientes = int(
+            pendientes["PENDIENTE_ENTREGA"]
+            .apply(convertir_numero)
+            .sum()
+        )
+
+    resumen = pd.DataFrame(
+        [
+            ["Fecha de generación", fecha_a_texto(datetime.now())],
+            ["Urgencias capturadas", len(capturadas)],
+            ["Órdenes pendientes de entrega", len(pendientes)],
+            ["Piezas pendientes (cuando están cuantificadas)", piezas_pendientes],
+            ["Solicitudes sin orden / revisar emisión", len(sin_orden)]
+        ],
+        columns=["Indicador", "Valor"]
+    )
+
+    salida = BytesIO()
+
+    with pd.ExcelWriter(
+        salida,
+        engine="openpyxl"
+    ) as writer:
+        resumen.to_excel(
+            writer,
+            index=False,
+            sheet_name="Resumen"
+        )
+        pendientes.to_excel(
+            writer,
+            index=False,
+            sheet_name="Pendientes_Entrega"
+        )
+        capturadas.to_excel(
+            writer,
+            index=False,
+            sheet_name="Urgencias_Capturadas"
+        )
+        sin_orden.to_excel(
+            writer,
+            index=False,
+            sheet_name="Sin_Orden"
+        )
+
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        relleno_header = PatternFill(
+            "solid",
+            fgColor="1F4E78"
+        )
+        relleno_pendiente = PatternFill(
+            "solid",
+            fgColor="FFF2CC"
+        )
+
+        for nombre_hoja in [
+            "Resumen",
+            "Pendientes_Entrega",
+            "Urgencias_Capturadas",
+            "Sin_Orden"
+        ]:
+            ws = writer.sheets[nombre_hoja]
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+
+            for celda in ws[1]:
+                celda.fill = relleno_header
+                celda.font = Font(
+                    color="FFFFFF",
+                    bold=True
+                )
+                celda.alignment = Alignment(
+                    horizontal="center",
+                    vertical="center",
+                    wrap_text=True
+                )
+
+            for columna in ws.columns:
+                letra = columna[0].column_letter
+                ancho = min(
+                    max(
+                        len(str(celda.value or ""))
+                        for celda in columna
+                    ) + 2,
+                    45
+                )
+                ws.column_dimensions[letra].width = max(ancho, 12)
+
+        ws_pendientes = writer.sheets["Pendientes_Entrega"]
+        for fila in range(2, ws_pendientes.max_row + 1):
+            for celda in ws_pendientes[fila]:
+                celda.fill = relleno_pendiente
+
+        # Convierte los vínculos de evidencia en enlaces clicables.
+        for nombre_hoja in [
+            "Pendientes_Entrega",
+            "Urgencias_Capturadas",
+            "Sin_Orden"
+        ]:
+            ws = writer.sheets[nombre_hoja]
+            encabezados = {
+                celda.value: celda.column
+                for celda in ws[1]
+            }
+            col_pdf = encabezados.get("PDF_CORREO_SEGUIMIENTO")
+
+            if col_pdf:
+                for fila in range(2, ws.max_row + 1):
+                    celda = ws.cell(
+                        row=fila,
+                        column=col_pdf
+                    )
+                    url = str(celda.value or "").strip()
+                    if url and url.lower() not in {"nan", "none", "null"}:
+                        celda.value = "Ver PDF"
+                        celda.hyperlink = url
+                        celda.style = "Hyperlink"
+
+    salida.seek(0)
+    return salida
+
+
 
 def convertir_excel_cedulas_rechazo(df):
     """Genera un Excel independiente con hipervínculos clicables a las cédulas."""
@@ -8033,6 +8430,106 @@ elif menu == "Urgencias":
         "El sistema localizará las órdenes existentes y conservará únicamente "
         "las que no tengan entrega registrada en la entidad."
     )
+
+    with st.expander(
+        "📊 Historial de urgencias y órdenes pendientes de entrega",
+        expanded=True
+    ):
+
+        datos_exportacion_urgencias = preparar_datos_exportacion_urgencias(
+            incidencias
+        )
+        urgencias_capturadas_export = datos_exportacion_urgencias[
+            "capturadas"
+        ]
+        ordenes_pendientes_export = datos_exportacion_urgencias[
+            "pendientes"
+        ]
+        urgencias_sin_orden_export = datos_exportacion_urgencias[
+            "sin_orden"
+        ]
+
+        m_export_1, m_export_2, m_export_3 = st.columns(3)
+
+        m_export_1.metric(
+            "Urgencias capturadas",
+            len(urgencias_capturadas_export)
+        )
+
+        m_export_2.metric(
+            "Órdenes pendientes",
+            len(ordenes_pendientes_export)
+        )
+
+        m_export_3.metric(
+            "Sin orden / revisar emisión",
+            len(urgencias_sin_orden_export)
+        )
+
+        c_export_1, c_export_2 = st.columns(2)
+
+        with c_export_1:
+            if st.button(
+                "🔄 Actualizar capturas",
+                use_container_width=True,
+                key="urgencias_actualizar_exportacion"
+            ):
+                st.cache_data.clear()
+                st.rerun()
+
+        with c_export_2:
+            excel_urgencias = convertir_excel_urgencias(
+                incidencias
+            )
+
+            st.download_button(
+                label="⬇️ Descargar Excel de urgencias pendientes",
+                data=excel_urgencias,
+                file_name=(
+                    f"urgencias_capturadas_pendientes_{fecha_hoy_sistema()}.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                use_container_width=True,
+                key="urgencias_descargar_excel"
+            )
+
+        if not ordenes_pendientes_export.empty:
+            st.caption(
+                "Vista previa de las órdenes con piezas pendientes de entrega "
+                "para enviarlas a programación y surtimiento."
+            )
+
+            columnas_pendientes_export = [
+                "FECHA_URGENCIA",
+                "ENTIDAD",
+                "CLAVE_CNIS",
+                "ORDEN_SUMINISTRO",
+                "CLUES_DESTINO",
+                "UNIDAD_DESTINO",
+                "PROVEEDOR",
+                "DESCRIPCION",
+                "PIEZAS_EMITIDAS",
+                "PIEZAS_ENTREGADAS_CLUES",
+                "PENDIENTE_ENTREGA",
+                "ESTATUS_ENTREGA_ENTIDAD",
+                "RESPONSABLE"
+            ]
+
+            dataframe_limpio(
+                ordenes_pendientes_export[
+                    [
+                        columna for columna in columnas_pendientes_export
+                        if columna in ordenes_pendientes_export.columns
+                    ]
+                ].head(300)
+            )
+        else:
+            st.info(
+                "No hay órdenes pendientes de entrega en las urgencias capturadas."
+            )
 
     c1, c2, c3 = st.columns(
         [
