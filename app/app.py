@@ -2665,7 +2665,20 @@ def preparar_datos_exportacion_urgencias(incidencias):
 def convertir_excel_urgencias(incidencias):
     """Genera el concentrado descargable de urgencias y pendientes."""
 
-    datos = preparar_datos_exportacion_urgencias(incidencias)
+    if (
+        isinstance(incidencias, dict)
+        and all(
+            clave in incidencias
+            for clave in [
+                "capturadas",
+                "pendientes",
+                "sin_orden"
+            ]
+        )
+    ):
+        datos = incidencias
+    else:
+        datos = preparar_datos_exportacion_urgencias(incidencias)
     capturadas = datos["capturadas"]
     pendientes = datos["pendientes"]
     sin_orden = datos["sin_orden"]
@@ -4528,6 +4541,171 @@ def leer_hoja_urgencias(spreadsheet_id, nombre_hoja):
     return pd.DataFrame(
         filas,
         columns=encabezados
+    )
+
+
+def normalizar_urgencias_drive_para_exportacion(
+    df,
+    sin_orden=False
+):
+    """Adapta las hojas BASE_URGENCIAS al formato de incidencias."""
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    trabajo = df.copy()
+
+    def asegurar_columna(nombre, valor=""):
+        if nombre not in trabajo.columns:
+            trabajo[nombre] = valor
+
+    def copiar_si_falta(destino, fuentes):
+        asegurar_columna(destino, "")
+        for fuente in fuentes:
+            if fuente not in trabajo.columns:
+                continue
+            vacias = trabajo[destino].apply(
+                limpiar_valor_visual
+            ).eq("")
+            trabajo.loc[vacias, destino] = trabajo.loc[vacias, fuente]
+
+    # Encabezados de la hoja Ordenes_Urgencias.
+    copiar_si_falta(
+        "ORDEN",
+        [
+            "ORDEN_SUMINISTRO",
+            "orden_suministro"
+        ]
+    )
+    copiar_si_falta(
+        "ORDEN_BUSCADA",
+        [
+            "ORDEN",
+            "ORDEN_SUMINISTRO"
+        ]
+    )
+    copiar_si_falta(
+        "ALMACEN_CLUES_DESTINO",
+        [
+            "ALMACEN"
+        ]
+    )
+    copiar_si_falta(
+        "ESTATUS_ENTREGA_ESTADO",
+        [
+            "ESTATUS_ENTREGA_ENTIDAD",
+            "ESTATUS_ENTREGA"
+        ]
+    )
+    copiar_si_falta(
+        "ID",
+        [
+            "ID_INCIDENCIA",
+            "id_incidencia"
+        ]
+    )
+    copiar_si_falta(
+        "FECHA_REGISTRO",
+        [
+            "FECHA_URGENCIA",
+            "SOLICITUD"
+        ]
+    )
+
+    asegurar_columna(
+        "TIPO_INCIDENCIA",
+        "URGENCIA"
+    )
+    trabajo["TIPO_INCIDENCIA"] = "URGENCIA"
+
+    asegurar_columna(
+        "ESTATUS_INCIDENCIA",
+        "En proceso"
+    )
+    trabajo["ESTATUS_INCIDENCIA"] = trabajo[
+        "ESTATUS_INCIDENCIA"
+    ].apply(
+        lambda valor: limpiar_valor_visual(valor) or "En proceso"
+    )
+
+    if sin_orden:
+        trabajo["ORDEN"] = ""
+        trabajo["ORDEN_BUSCADA"] = ""
+        trabajo["ESTATUS_BASE"] = trabajo.get(
+            "ESTATUS",
+            "REVISAR CON EMISIÓN"
+        )
+        trabajo["ESTATUS_SEGUIMIENTO"] = "REVISAR CON EMISIÓN"
+        trabajo["ESTATUS_ENTREGA_ESTADO"] = "NO ENTREGADA"
+
+    return trabajo
+
+
+@st.cache_data(
+    ttl=300,
+    show_spinner=False
+)
+def cargar_urgencias_para_exportacion():
+    """Consolida urgencias de Supabase y de la base histórica de Drive."""
+
+    fuentes = []
+
+    try:
+        incidencias_supabase = cargar_incidencias()
+        if incidencias_supabase is not None and not incidencias_supabase.empty:
+            fuentes.append(incidencias_supabase)
+    except Exception:
+        pass
+
+    # Algunas capturas históricas pueden existir en BASE_URGENCIAS aunque
+    # Supabase se haya actualizado en otro proyecto o no tenga lectura pública.
+    try:
+        archivo = buscar_google_sheet_urgencias()
+
+        if archivo and archivo.get("id"):
+            ordenes_drive = leer_hoja_urgencias(
+                archivo["id"],
+                NOMBRE_HOJA_URGENCIAS_ORDENES
+            )
+            sin_orden_drive = leer_hoja_urgencias(
+                archivo["id"],
+                NOMBRE_HOJA_URGENCIAS_SIN_ORDEN
+            )
+
+            ordenes_drive = normalizar_urgencias_drive_para_exportacion(
+                ordenes_drive,
+                sin_orden=False
+            )
+            sin_orden_drive = normalizar_urgencias_drive_para_exportacion(
+                sin_orden_drive,
+                sin_orden=True
+            )
+
+            if not ordenes_drive.empty:
+                fuentes.append(ordenes_drive)
+            if not sin_orden_drive.empty:
+                fuentes.append(sin_orden_drive)
+
+    except Exception:
+        # La exportación debe seguir funcionando con Supabase aunque Drive
+        # esté temporalmente sin conexión.
+        pass
+
+    if not fuentes:
+        return preparar_datos_exportacion_urgencias(
+            pd.DataFrame(
+                columns=["TIPO_INCIDENCIA"]
+            )
+        )
+
+    combinado = pd.concat(
+        fuentes,
+        ignore_index=True,
+        sort=False
+    )
+
+    return preparar_datos_exportacion_urgencias(
+        combinado
     )
 
 
@@ -8436,9 +8614,7 @@ elif menu == "Urgencias":
         expanded=True
     ):
 
-        datos_exportacion_urgencias = preparar_datos_exportacion_urgencias(
-            incidencias
-        )
+        datos_exportacion_urgencias = cargar_urgencias_para_exportacion()
         urgencias_capturadas_export = datos_exportacion_urgencias[
             "capturadas"
         ]
@@ -8479,7 +8655,7 @@ elif menu == "Urgencias":
 
         with c_export_2:
             excel_urgencias = convertir_excel_urgencias(
-                incidencias
+                datos_exportacion_urgencias
             )
 
             st.download_button(
