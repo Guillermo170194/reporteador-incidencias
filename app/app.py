@@ -3450,6 +3450,39 @@ def homologar_entidad_urgencia_desde_compendio(
     return ""
 
 
+def resumir_error_consulta_compendio_urgencia(error):
+
+    texto = str(
+        error
+    ).strip()
+
+    if not texto:
+
+        texto = type(
+            error
+        ).__name__
+
+    for secreto in [
+        os.environ.get(
+            "SUPABASE_KEY",
+            ""
+        ),
+        os.environ.get(
+            "SUPABASE_URL",
+            ""
+        )
+    ]:
+
+        if secreto:
+
+            texto = texto.replace(
+                secreto,
+                "[oculto]"
+            )
+
+    return texto[:600]
+
+
 def consultar_compendio_por_clave_urgencia(clave):
 
     variantes = variantes_clave_urgencia(clave)
@@ -3459,9 +3492,11 @@ def consultar_compendio_por_clave_urgencia(clave):
         return pd.DataFrame()
 
     datos = []
+    errores = []
 
-    # La columna oficial es clave_cnis; clave sólo se usa como respaldo
-    # para instalaciones que conservaron el encabezado anterior.
+    # Primero hacemos coincidencia exacta en la columna oficial.  Al encontrar
+    # filas detenemos las consultas restantes; el compendio es grande y no es
+    # necesario recorrer todas las variantes una vez localizada la clave.
     for columna in [
         "clave_cnis",
         "clave"
@@ -3489,14 +3524,26 @@ def consultar_compendio_por_clave_urgencia(clave):
                     .execute()
                 )
 
-                datos.extend(
-                    respuesta.data or []
+                filas = respuesta.data or []
+
+                if filas:
+
+                    datos.extend(
+                        filas
+                    )
+
+                    break
+
+            except Exception as error:
+
+                errores.append(
+                    f"{columna} exacta: "
+                    f"{resumir_error_consulta_compendio_urgencia(error)}"
                 )
 
-            except Exception:
+        if datos:
 
-                # Una columna alternativa puede no existir en el proyecto.
-                continue
+            break
 
     if not datos:
 
@@ -3536,23 +3583,52 @@ def consultar_compendio_por_clave_urgencia(clave):
                         .execute()
                     )
 
-                    datos.extend(
-                        respuesta.data or []
+                    filas = respuesta.data or []
+
+                    if filas:
+
+                        datos.extend(
+                            filas
+                        )
+
+                        break
+
+                except Exception as error:
+
+                    errores.append(
+                        f"{columna} parcial: "
+                        f"{resumir_error_consulta_compendio_urgencia(error)}"
                     )
 
-                except Exception:
+            if datos:
 
-                    continue
+                break
 
     if not datos:
 
-        return pd.DataFrame()
+        salida = pd.DataFrame()
 
-    return pd.DataFrame(
+        salida.attrs[
+            "error_consulta_urgencia"
+        ] = " | ".join(
+            dict.fromkeys(
+                errores
+            )
+        )[:1200]
+
+        return salida
+
+    salida = pd.DataFrame(
         datos
     ).drop_duplicates(
         ignore_index=True
     )
+
+    salida.attrs[
+        "error_consulta_urgencia"
+    ] = ""
+
+    return salida
 
 
 ENTIDADES_URGENCIA = [
@@ -3909,6 +3985,14 @@ def buscar_ordenes_urgencia(clave, entidad):
         clave
     )
 
+    error_consulta = str(
+        compendio.attrs.get(
+            "error_consulta_urgencia",
+            ""
+        )
+        or ""
+    )
+
     vacio = pd.DataFrame(
         columns=COLUMNAS_BASE_URGENCIAS_ORDENES
     )
@@ -3925,7 +4009,8 @@ def buscar_ordenes_urgencia(clave, entidad):
             "sin_orden": False,
             "requiere_revision_emision": False,
             "clave_valida": False,
-            "entidad_homologada": ""
+            "entidad_homologada": "",
+            "error_consulta": error_consulta
         }
 
     columnas = columnas_orden_urgencia()
@@ -9281,10 +9366,29 @@ elif menu == "Urgencias":
             False
         ):
 
-            st.error(
-                "La clave no fue localizada en la base consultada. "
-                "Verifica el formato de la clave o la sincronización del compendio."
+            detalle_consulta = resultado_urgencia.get(
+                "error_consulta",
+                ""
             )
+
+            if detalle_consulta:
+
+                st.error(
+                    "No se pudo consultar el compendio desde la aplicación. "
+                    "La clave no se marcó como inexistente."
+                )
+
+                st.caption(
+                    "Detalle técnico: "
+                    f"{detalle_consulta}"
+                )
+
+            else:
+
+                st.error(
+                    "La clave no fue localizada en la base consultada. "
+                    "Verifica el formato de la clave o la sincronización del compendio."
+                )
 
         elif not resultado_urgencia.get(
             "entidad_homologada",
