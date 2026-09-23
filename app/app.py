@@ -8,6 +8,7 @@ import json
 import tempfile
 import unicodedata
 import uuid
+from collections.abc import Mapping
 
 from dotenv import load_dotenv
 
@@ -693,23 +694,36 @@ def obtener_valor(
     opciones
 ):
 
+    if fila is None:
+        return ""
+
     for col in opciones:
 
-        if col in fila.index:
+        try:
+            # Las filas de pandas exponen ``index``; las filas que vienen de
+            # Supabase/Google pueden llegar como diccionarios.  No asumimos
+            # un solo tipo porque la migracion combina ambos origenes.
+            if isinstance(fila, Mapping):
+                if col not in fila:
+                    continue
+                valor = fila.get(col, "")
+            elif hasattr(fila, "index"):
+                if col not in fila.index:
+                    continue
+                valor = fila.get(col, "")
+            else:
+                valor = fila[col]
+        except (AttributeError, KeyError, IndexError, TypeError):
+            continue
 
-            valor = fila.get(
-                col,
-                ""
-            )
+        if (
+            pd.notna(valor)
+            and str(valor).strip()
+            and str(valor).strip().lower() != "nan"
+            and str(valor).strip().lower() != "none"
+        ):
 
-            if (
-                pd.notna(valor)
-                and str(valor).strip()
-                and str(valor).strip().lower() != "nan"
-                and str(valor).strip().lower() != "none"
-            ):
-
-                return valor
+            return valor
 
     return ""
 
