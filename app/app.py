@@ -4687,13 +4687,24 @@ def normalizar_urgencias_drive_para_exportacion(
 
     def copiar_si_falta(destino, fuentes):
         asegurar_columna(destino, "")
+        # Supabase puede entregar columnas como ``string[pyarrow]``. Se
+        # convierten a object antes de completar valores para evitar el
+        # TypeError de Pandas al asignar una serie con otro dtype.
+        trabajo[destino] = trabajo[destino].astype(object)
         for fuente in fuentes:
             if fuente not in trabajo.columns:
                 continue
-            vacias = trabajo[destino].apply(
+            vacias = trabajo[destino].map(
                 limpiar_valor_visual
             ).eq("")
-            trabajo.loc[vacias, destino] = trabajo.loc[vacias, fuente]
+            if vacias.any():
+                valores_fuente = (
+                    trabajo.loc[vacias, fuente]
+                    .astype(object)
+                    .map(limpiar_valor_visual)
+                    .to_numpy(dtype=object)
+                )
+                trabajo.loc[vacias, destino] = valores_fuente
 
     # Encabezados de la hoja Ordenes_Urgencias.
     copiar_si_falta(
