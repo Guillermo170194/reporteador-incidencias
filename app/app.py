@@ -3494,12 +3494,11 @@ def consultar_compendio_por_clave_urgencia(clave):
     datos = []
     errores = []
 
-    # Primero hacemos coincidencia exacta en la columna oficial.  Al encontrar
-    # filas detenemos las consultas restantes; el compendio es grande y no es
-    # necesario recorrer todas las variantes una vez localizada la clave.
+    # La tabla actual sólo tiene ``clave_cnis``.  Buscamos coincidencia exacta
+    # y detenemos las variantes al encontrar filas, evitando recorridos
+    # innecesarios sobre el compendio grande.
     for columna in [
-        "clave_cnis",
-        "clave"
+        "clave_cnis"
     ]:
 
         for variante in variantes:
@@ -3553,8 +3552,7 @@ def consultar_compendio_por_clave_urgencia(clave):
         ]
 
         for columna in [
-            "clave_cnis",
-            "clave"
+            "clave_cnis"
         ]:
 
             for texto_busqueda in textos_busqueda:
