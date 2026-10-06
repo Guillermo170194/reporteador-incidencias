@@ -895,6 +895,27 @@ def observaciones_sin_fecha_rechazo(observaciones):
     return re.sub(r"\s*\[FECHA_RECHAZO:[^\]]*\]", "", str(observaciones or "")).strip()
 
 
+def agregar_fecha_incidencia_observaciones(observaciones, fecha_incidencia):
+    """Guarda la fecha de incidencia sin requerir cambios en el esquema de Supabase."""
+    texto = limpiar_valor_visual(observaciones)
+    if not fecha_incidencia:
+        return texto
+    fecha = fecha_a_texto(fecha_incidencia)
+    texto = re.sub(r"\s*\[FECHA_INCIDENCIA:[^\]]*\]", "", texto).strip()
+    return f"{texto} [FECHA_INCIDENCIA:{fecha}]".strip()
+
+
+def extraer_fecha_incidencia(observaciones):
+    match = re.search(r"\[FECHA_INCIDENCIA:([^\]]+)\]", str(observaciones or ""))
+    return fecha_a_texto(match.group(1)) if match else ""
+
+
+def observaciones_sin_fechas_sistema(observaciones):
+    texto = re.sub(r"\s*\[FECHA_RECHAZO:[^\]]*\]", "", str(observaciones or ""))
+    texto = re.sub(r"\s*\[FECHA_INCIDENCIA:[^\]]*\]", "", texto)
+    return texto.strip()
+
+
 def limpiar_valor_visual(
     valor
 ):
@@ -1570,12 +1591,17 @@ def cargar_incidencias():
 
     if "OBSERVACIONES" in incidencias.columns:
         incidencias["FECHA_RECHAZO"] = incidencias["OBSERVACIONES"].apply(extraer_fecha_rechazo)
-        incidencias["OBSERVACIONES"] = incidencias["OBSERVACIONES"].apply(observaciones_sin_fecha_rechazo)
+        incidencias["FECHA_INCIDENCIA"] = incidencias["OBSERVACIONES"].apply(extraer_fecha_incidencia)
+        incidencias["OBSERVACIONES"] = incidencias["OBSERVACIONES"].apply(observaciones_sin_fechas_sistema)
     else:
         incidencias["FECHA_RECHAZO"] = ""
+        incidencias["FECHA_INCIDENCIA"] = ""
 
     if "FECHA_REGISTRO" in incidencias.columns:
         incidencias["FECHA_REGISTRO"] = incidencias["FECHA_REGISTRO"].apply(fecha_a_texto)
+        # Históricas: si no tenían fecha de incidencia, se toma su fecha de captura.
+        mascara_sin_fecha = incidencias["FECHA_INCIDENCIA"].astype(str).str.strip().eq("")
+        incidencias.loc[mascara_sin_fecha, "FECHA_INCIDENCIA"] = incidencias.loc[mascara_sin_fecha, "FECHA_REGISTRO"]
 
     # Homologación para registros importados desde Excel con encabezados distintos.
     columnas_alternas = {
@@ -6165,6 +6191,7 @@ def construir_registro_incidencia(
     estatus,
     responsable,
     observaciones,
+    fecha_incidencia=None,
     ruta_cedula="",
     ruta_correo=""
 ):
@@ -6200,7 +6227,9 @@ def construir_registro_incidencia(
         "TIPO_INCIDENCIA": tipo,
         "ESTATUS_INCIDENCIA": estatus,
         "RESPONSABLE": responsable,
-        "OBSERVACIONES": observaciones,
+        "OBSERVACIONES": agregar_fecha_incidencia_observaciones(
+            observaciones, fecha_incidencia or datetime.now().date()
+        ),
         "PDF_CEDULA_RECHAZO": ruta_cedula,
         "PDF_CORREO_SEGUIMIENTO": ruta_correo
     }
@@ -8723,6 +8752,13 @@ if menu == "Registrar incidencia":
                     MONITORES
                 )
 
+                fecha_incidencia = st.date_input(
+                    "Fecha de la incidencia",
+                    value=datetime.now().date(),
+                    format="DD/MM/YYYY",
+                    help="Fecha en que ocurrió la incidencia. La fecha de captura se conserva por separado."
+                )
+
                 observaciones = st.text_area(
                     "Observaciones"
                 )
@@ -8797,6 +8833,7 @@ if menu == "Registrar incidencia":
                         estatus,
                         responsable,
                         observaciones_guardar,
+                        fecha_incidencia,
                         ruta_cedula,
                         ruta_correo
                     )
@@ -8895,6 +8932,13 @@ if menu == "Registrar incidencia":
             "Responsable",
             MONITORES,
             key="masivo_responsable"
+        )
+
+        fecha_incidencia_m = st.date_input(
+            "Fecha de la incidencia",
+            value=datetime.now().date(),
+            format="DD/MM/YYYY",
+            key="masivo_fecha_incidencia"
         )
 
         observaciones_m = st.text_area(
@@ -9026,6 +9070,7 @@ if menu == "Registrar incidencia":
                                 estatus_m,
                                 responsable_m,
                                 observaciones_m,
+                                fecha_incidencia_m,
                                 "",
                                 ""
                             )
@@ -9975,6 +10020,25 @@ elif menu == "Seguimiento":
             semaforo_seguimiento
         )
 
+        # Rango para consultar/descargar incidencias previas por fecha de captura.
+        fechas_captura = pd.to_datetime(df_seg["FECHA_REGISTRO"], errors="coerce", dayfirst=True)
+        fechas_validas = fechas_captura.dropna()
+        if not fechas_validas.empty:
+            fmin = fechas_validas.min().date()
+            fmax = fechas_validas.max().date()
+            rango_fechas = st.date_input(
+                "Rango de fecha de captura",
+                value=(fmin, fmax),
+                min_value=fmin,
+                max_value=fmax,
+                format="DD/MM/YYYY",
+                key="seguimiento_rango_fecha_captura"
+            )
+            if isinstance(rango_fechas, (tuple, list)) and len(rango_fechas) == 2:
+                desde, hasta = rango_fechas
+                mascara_fecha = fechas_captura.dt.date.between(desde, hasta)
+                df_seg = df_seg[mascara_fecha.fillna(False)].copy()
+
         c1, c2, c3, c4 = st.columns(
             4
         )
@@ -10058,6 +10122,7 @@ elif menu == "Seguimiento":
         columnas_mostrar = [
             "SEMAFORO",
             "FECHA_REGISTRO",
+            "FECHA_INCIDENCIA",
             "FECHA_RECHAZO",
             "ENTIDAD",
             "ORDEN",
@@ -10186,7 +10251,11 @@ elif menu == "Seguimiento":
         st.download_button(
             label="⬇️ Descargar incidencias filtradas en Excel",
             data=excel,
-            file_name="reporte_incidencias_filtrado.xlsx",
+            file_name=(
+                f"reporte_incidencias_{desde.strftime('%Y%m%d')}_{hasta.strftime('%Y%m%d')}.xlsx"
+                if 'desde' in locals() and 'hasta' in locals()
+                else "reporte_incidencias_filtrado.xlsx"
+            ),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
