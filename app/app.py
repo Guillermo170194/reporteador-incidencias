@@ -876,6 +876,25 @@ def fecha_a_texto(
         )
 
 
+def agregar_fecha_rechazo_observaciones(observaciones, fecha_rechazo):
+    """Guarda la fecha de rechazo sin requerir cambios en el esquema de Supabase."""
+    texto = limpiar_valor_visual(observaciones)
+    if not fecha_rechazo:
+        return texto
+    fecha = fecha_a_texto(fecha_rechazo)
+    texto = re.sub(r"\s*\[FECHA_RECHAZO:[^\]]*\]", "", texto).strip()
+    return f"{texto} [FECHA_RECHAZO:{fecha}]".strip()
+
+
+def extraer_fecha_rechazo(observaciones):
+    match = re.search(r"\[FECHA_RECHAZO:([^\]]+)\]", str(observaciones or ""))
+    return fecha_a_texto(match.group(1)) if match else ""
+
+
+def observaciones_sin_fecha_rechazo(observaciones):
+    return re.sub(r"\s*\[FECHA_RECHAZO:[^\]]*\]", "", str(observaciones or "")).strip()
+
+
 def limpiar_valor_visual(
     valor
 ):
@@ -913,6 +932,32 @@ def limpiar_valor_visual(
     return texto
 
 
+def formatear_fechas_cortas_df(df):
+    """Formatea columnas de fecha para presentación/exportación como DD/MM/AAAA.
+
+    No altera las fechas internas usadas por filtros, cálculos o controles del sistema.
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    resultado = df.copy()
+    for columna in resultado.columns:
+        nombre = str(columna).upper().strip()
+        # Solo columnas cuyo encabezado identifica explícitamente una fecha.
+        if "FECHA" not in nombre:
+            continue
+
+        serie_original = resultado[columna]
+        fechas = pd.to_datetime(serie_original, errors="coerce", dayfirst=False)
+        mascara = fechas.notna()
+        if mascara.any():
+            serie = serie_original.copy().astype("object")
+            serie.loc[mascara] = fechas.loc[mascara].dt.strftime("%d/%m/%Y")
+            resultado[columna] = serie
+
+    return resultado
+
+
 def limpiar_df_visual(
     df
 ):
@@ -940,7 +985,7 @@ def limpiar_df_visual(
 
         return df
 
-    limpio = df.copy()
+    limpio = formatear_fechas_cortas_df(df.copy())
 
     limpio = limpio.replace(
         {
@@ -1522,6 +1567,15 @@ def cargar_incidencias():
     incidencias = incidencias.rename(
         columns=renombres
     )
+
+    if "OBSERVACIONES" in incidencias.columns:
+        incidencias["FECHA_RECHAZO"] = incidencias["OBSERVACIONES"].apply(extraer_fecha_rechazo)
+        incidencias["OBSERVACIONES"] = incidencias["OBSERVACIONES"].apply(observaciones_sin_fecha_rechazo)
+    else:
+        incidencias["FECHA_RECHAZO"] = ""
+
+    if "FECHA_REGISTRO" in incidencias.columns:
+        incidencias["FECHA_REGISTRO"] = incidencias["FECHA_REGISTRO"].apply(fecha_a_texto)
 
     # Homologación para registros importados desde Excel con encabezados distintos.
     columnas_alternas = {
@@ -2893,6 +2947,13 @@ def convertir_excel_urgencias(incidencias):
     )
     sin_orden = datos["sin_orden"]
 
+    # Todas las fechas visibles/exportadas salen en formato corto DD/MM/AAAA.
+    capturadas = formatear_fechas_cortas_df(capturadas)
+    claves = formatear_fechas_cortas_df(claves)
+    pendientes = formatear_fechas_cortas_df(pendientes)
+    atendidas = formatear_fechas_cortas_df(atendidas)
+    sin_orden = formatear_fechas_cortas_df(sin_orden)
+
     piezas_pendientes = 0
     if not pendientes.empty and "PENDIENTE_ENTREGA" in pendientes.columns:
         piezas_pendientes = int(
@@ -3029,7 +3090,7 @@ def convertir_excel_urgencias(incidencias):
 def convertir_excel_cedulas_rechazo(df):
     """Genera un Excel independiente con hipervínculos clicables a las cédulas."""
     salida = BytesIO()
-    exportar = df.copy()
+    exportar = formatear_fechas_cortas_df(df.copy())
 
     if "PDF_CEDULA_RECHAZO" in exportar.columns:
         exportar = exportar.rename(columns={"PDF_CEDULA_RECHAZO": "ABRIR PDF"})
@@ -8683,6 +8744,13 @@ if menu == "Registrar incidencia":
                         ]
                     )
 
+                    fecha_rechazo = st.date_input(
+                        "Fecha del rechazo",
+                        value=datetime.now().date(),
+                        format="DD/MM/YYYY",
+                        help="Fecha en que ocurrió el rechazo, independiente de la fecha de captura."
+                    )
+
                 with c21:
 
                     correo_seguimiento = st.file_uploader(
@@ -8715,6 +8783,12 @@ if menu == "Registrar incidencia":
                         clues_destino
                     )
 
+                    observaciones_guardar = (
+                        agregar_fecha_rechazo_observaciones(observaciones, fecha_rechazo)
+                        if cedula_rechazo is not None
+                        else observaciones
+                    )
+
                     nueva = construir_registro_incidencia(
                         valor_busqueda,
                         datos_orden,
@@ -8722,7 +8796,7 @@ if menu == "Registrar incidencia":
                         tipo,
                         estatus,
                         responsable,
-                        observaciones,
+                        observaciones_guardar,
                         ruta_cedula,
                         ruta_correo
                     )
@@ -9984,6 +10058,7 @@ elif menu == "Seguimiento":
         columnas_mostrar = [
             "SEMAFORO",
             "FECHA_REGISTRO",
+            "FECHA_RECHAZO",
             "ENTIDAD",
             "ORDEN",
             "CLAVE_CNIS",
@@ -10053,6 +10128,15 @@ elif menu == "Seguimiento":
                     key="archivo_incidencia_previa"
                 )
 
+                fecha_rechazo_previa = None
+                if tipo_archivo == "Cédula rechazo":
+                    fecha_rechazo_previa = st.date_input(
+                        "Fecha del rechazo",
+                        value=datetime.now().date(),
+                        format="DD/MM/YYYY",
+                        key="fecha_rechazo_incidencia_previa"
+                    )
+
                 if st.button(
                     "📎 Subir archivo a incidencia previa",
                     use_container_width=True
@@ -10074,6 +10158,14 @@ elif menu == "Seguimiento":
                     )
 
                     if ok:
+
+                        if tipo_pdf == "cedula" and fecha_rechazo_previa is not None:
+                            obs_actual = fila_archivo.get("OBSERVACIONES", "")
+                            obs_guardar = agregar_fecha_rechazo_observaciones(obs_actual, fecha_rechazo_previa)
+                            supabase.table("incidencias").update({"observaciones": obs_guardar}).eq(
+                                "id", fila_archivo.get("ID", "")
+                            ).execute()
+                            st.cache_data.clear()
 
                         st.success(
                             "Archivo agregado correctamente a la incidencia previa."
@@ -10153,12 +10245,12 @@ elif menu == "Cédulas de rechazo":
             st.metric("Cédulas encontradas", len(df_cedulas))
 
             columnas = [
-                "FECHA_REGISTRO", "ENTIDAD", "ORDEN", "ORDEN_BUSCADA",
+                "FECHA_REGISTRO", "FECHA_RECHAZO", "ENTIDAD", "ORDEN", "ORDEN_BUSCADA",
                 "CLAVE_CNIS", "PROVEEDOR", "TIPO_INCIDENCIA",
                 "ESTATUS_INCIDENCIA", "RESPONSABLE", "PDF_CEDULA_RECHAZO"
             ]
             columnas = [c for c in columnas if c in df_cedulas.columns]
-            vista = df_cedulas[columnas].copy()
+            vista = formatear_fechas_cortas_df(df_cedulas[columnas].copy())
 
             st.dataframe(
                 vista,
