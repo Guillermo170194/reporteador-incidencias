@@ -1,6 +1,9 @@
-﻿.env
-credenciales_google.json
-app/.env
-app/credenciales_google.json
+.env
+.env.*
+!.env.example
+*credenciales*.json
+CREDENCIALES/
+.streamlit/secrets.toml
 __pycache__/
 *.pyc
+*.zip
