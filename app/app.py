@@ -2672,6 +2672,12 @@ elif menu == "Cédulas de rechazo":
 
 elif menu == "Base Supabase":
 
+    from modules.editor_incidencias import mostrar_editor
+    vista_base = st.radio("Herramienta", ["Consultar compendio", "Editar incidencia"], horizontal=True)
+    if vista_base == "Editar incidencia":
+        mostrar_editor(supabase)
+        st.stop()
+
     st.subheader(
         "⚡ Base Supabase"
     )
