@@ -185,23 +185,6 @@ if menu == "Resumen Ejecutivo":
                 semaforo_seguimiento
             )
 
-        # Clasificación auxiliar de cancelaciones: ESTATUS_BASE es el dato de origen.
-        # No sobrescribir ESTATUS_SEGUIMIENTO ni modificar Supabase.
-        # INACTIVA se trata como cancelada para los indicadores operativos.
-        if "ESTATUS_BASE" in df_filtrado.columns:
-            base_estado = df_filtrado["ESTATUS_BASE"].fillna("").astype(str).str.strip().str.upper()
-        else:
-            base_estado = pd.Series("", index=df_filtrado.index)
-        seguimiento_original = df_filtrado["ESTATUS_SEGUIMIENTO"].fillna("").astype(str).str.strip().str.upper()
-        es_cancelada_base = base_estado.isin(["INACTIVA", "CANCELADA", "CANCELADO"])
-        df_filtrado["CLASIFICACION_REPORTE"] = df_filtrado["ESTATUS_SEGUIMIENTO"].copy()
-        df_filtrado.loc[es_cancelada_base, "CLASIFICACION_REPORTE"] = "CANCELADA (ESTATUS BASE)"
-        df_filtrado["OBSERVACION_VALIDACION"] = ""
-        df_filtrado.loc[es_cancelada_base & seguimiento_original.ne("INCOMPLETA-CANCELADA"), "OBSERVACION_VALIDACION"] = "Revisar discrepancia: orden inactiva/cancelada en base"
-        df_filtrado.loc[(~es_cancelada_base) & seguimiento_original.eq("INCOMPLETA-CANCELADA"), "OBSERVACION_VALIDACION"] = "Revisar discrepancia: seguimiento cancelado y base no cancelada"
-        # Los campos clínicos/logísticos vacíos de canceladas no son errores de captura por sí mismos.
-        df_filtrado["DATOS_NO_APLICABLES_POR_CANCELACION"] = es_cancelada_base.map({True: "SÍ", False: "NO"})
-
         # Los indicadores del conjunto filtrado se calculan después de aplicar los filtros.
         # El total nacional se muestra por separado, sin mezclar denominadores.
         total_nacional = len(df_resumen)
@@ -292,6 +275,24 @@ if menu == "Resumen Ejecutivo":
                 df_filtrado["RESPONSABLE"].astype(str) == responsable_filtro
             ]
 
+        # Clasificación auxiliar de cancelaciones: ESTATUS_BASE es el dato de origen.
+        # No sobrescribir ESTATUS_SEGUIMIENTO ni modificar Supabase.
+        # INACTIVA se trata como cancelada para los indicadores operativos.
+        if "ESTATUS_BASE" in df_filtrado.columns:
+            base_estado = df_filtrado["ESTATUS_BASE"].fillna("").astype(str).str.strip().str.upper()
+        else:
+            base_estado = pd.Series("", index=df_filtrado.index)
+        seguimiento_original = df_filtrado["ESTATUS_SEGUIMIENTO"].fillna("").astype(str).str.strip().str.upper()
+        es_cancelada_base = base_estado.isin(["INACTIVA", "CANCELADA", "CANCELADO"])
+        df_filtrado["CLASIFICACION_REPORTE"] = df_filtrado["ESTATUS_SEGUIMIENTO"].copy()
+        df_filtrado.loc[es_cancelada_base, "CLASIFICACION_REPORTE"] = "CANCELADA (ESTATUS BASE)"
+        df_filtrado["OBSERVACION_VALIDACION"] = ""
+        df_filtrado.loc[es_cancelada_base & seguimiento_original.ne("INCOMPLETA-CANCELADA"), "OBSERVACION_VALIDACION"] = "Revisar discrepancia: orden inactiva/cancelada en base"
+        df_filtrado.loc[(~es_cancelada_base) & seguimiento_original.eq("INCOMPLETA-CANCELADA"), "OBSERVACION_VALIDACION"] = "Revisar discrepancia: seguimiento cancelado y base no cancelada"
+        # Los campos clínicos/logísticos vacíos de canceladas no son errores de captura por sí mismos.
+        df_filtrado["DATOS_NO_APLICABLES_POR_CANCELACION"] = es_cancelada_base.map({True: "SÍ", False: "NO"})
+
+
         total = len(df_filtrado)
         seguimiento = df_filtrado["ESTATUS_SEGUIMIENTO"].fillna("").astype(str).str.strip().str.upper()
         # Las órdenes INACTIVAS no se contabilizan como entregadas ni pendientes.
@@ -339,11 +340,8 @@ if menu == "Resumen Ejecutivo":
             )
         )
 
-        resumen_seguimiento["SEMAFORO"] = resumen_seguimiento[
-            "ESTATUS_SEGUIMIENTO"
-        ].apply(
-            semaforo_seguimiento
-        )
+        resumen_seguimiento["ESTATUS_SEGUIMIENTO"] = resumen_seguimiento["CLASIFICACION_REPORTE"]
+        resumen_seguimiento["SEMAFORO"] = resumen_seguimiento["ESTATUS_SEGUIMIENTO"].apply(semaforo_seguimiento)
 
         chart_seguimiento = (
             alt.Chart(
