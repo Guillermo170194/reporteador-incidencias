@@ -185,6 +185,23 @@ if menu == "Resumen Ejecutivo":
                 semaforo_seguimiento
             )
 
+        # Clasificación auxiliar de cancelaciones: ESTATUS_BASE es el dato de origen.
+        # No sobrescribir ESTATUS_SEGUIMIENTO ni modificar Supabase.
+        # INACTIVA se trata como cancelada para los indicadores operativos.
+        if "ESTATUS_BASE" in df_filtrado.columns:
+            base_estado = df_filtrado["ESTATUS_BASE"].fillna("").astype(str).str.strip().str.upper()
+        else:
+            base_estado = pd.Series("", index=df_filtrado.index)
+        seguimiento_original = df_filtrado["ESTATUS_SEGUIMIENTO"].fillna("").astype(str).str.strip().str.upper()
+        es_cancelada_base = base_estado.isin(["INACTIVA", "CANCELADA", "CANCELADO"])
+        df_filtrado["CLASIFICACION_REPORTE"] = df_filtrado["ESTATUS_SEGUIMIENTO"].copy()
+        df_filtrado.loc[es_cancelada_base, "CLASIFICACION_REPORTE"] = "CANCELADA (ESTATUS BASE)"
+        df_filtrado["OBSERVACION_VALIDACION"] = ""
+        df_filtrado.loc[es_cancelada_base & seguimiento_original.ne("INCOMPLETA-CANCELADA"), "OBSERVACION_VALIDACION"] = "Revisar discrepancia: orden inactiva/cancelada en base"
+        df_filtrado.loc[(~es_cancelada_base) & seguimiento_original.eq("INCOMPLETA-CANCELADA"), "OBSERVACION_VALIDACION"] = "Revisar discrepancia: seguimiento cancelado y base no cancelada"
+        # Los campos clínicos/logísticos vacíos de canceladas no son errores de captura por sí mismos.
+        df_filtrado["DATOS_NO_APLICABLES_POR_CANCELACION"] = es_cancelada_base.map({True: "SÍ", False: "NO"})
+
         # Los indicadores del conjunto filtrado se calculan después de aplicar los filtros.
         # El total nacional se muestra por separado, sin mezclar denominadores.
         total_nacional = len(df_resumen)
@@ -277,9 +294,10 @@ if menu == "Resumen Ejecutivo":
 
         total = len(df_filtrado)
         seguimiento = df_filtrado["ESTATUS_SEGUIMIENTO"].fillna("").astype(str).str.strip().str.upper()
-        completo_entregado = int(seguimiento.eq("COMPLETO-ENTREGADO").sum())
-        incompleta_sin_entregar = int(seguimiento.eq("INCOMPLETA-SIN ENTREGAR").sum())
-        incompleta_cancelada = int(seguimiento.eq("INCOMPLETA-CANCELADA").sum())
+        # Las órdenes INACTIVAS no se contabilizan como entregadas ni pendientes.
+        completo_entregado = int((~es_cancelada_base & seguimiento.eq("COMPLETO-ENTREGADO")).sum())
+        incompleta_sin_entregar = int((~es_cancelada_base & seguimiento.eq("INCOMPLETA-SIN ENTREGAR")).sum())
+        incompleta_cancelada = int(es_cancelada_base.sum() + ((~es_cancelada_base) & seguimiento.eq("INCOMPLETA-CANCELADA")).sum())
         otros_estatus = total - completo_entregado - incompleta_sin_entregar - incompleta_cancelada
         porcentaje_entregado = (100 * completo_entregado / total) if total else 0.0
 
@@ -292,6 +310,13 @@ if menu == "Resumen Ejecutivo":
         c5.metric("% entregado", f"{porcentaje_entregado:.2f}%")
         st.caption(f"Otros / sin estatus: {otros_estatus:,}. Verificación: {completo_entregado + incompleta_sin_entregar + incompleta_cancelada + otros_estatus:,} de {total:,} registros.")
 
+        discrepancias = df_filtrado[df_filtrado["OBSERVACION_VALIDACION"].ne("")]
+        st.caption(f"Órdenes inactivas/canceladas según ESTATUS_BASE: {int(es_cancelada_base.sum()):,}. Discrepancias entre base y seguimiento: {len(discrepancias):,}.")
+        if not discrepancias.empty:
+            with st.expander(f"⚠️ Revisar {len(discrepancias):,} discrepancias de estatus"):
+                columnas_revision = [c for c in ["ID", "ORDEN", "ESTATUS_BASE", "ESTATUS_SEGUIMIENTO", "OBSERVACION_VALIDACION"] if c in discrepancias.columns]
+                dataframe_limpio(discrepancias[columnas_revision])
+
         st.divider()
 
         st.subheader(
@@ -301,7 +326,7 @@ if menu == "Resumen Ejecutivo":
         resumen_seguimiento = (
             df_filtrado
             .groupby(
-                "ESTATUS_SEGUIMIENTO",
+                "CLASIFICACION_REPORTE",
                 dropna=False
             )
             .size()
@@ -614,10 +639,10 @@ if menu == "Resumen Ejecutivo":
             .str.upper()
             .isin(
                 [
-                    "INCOMPLETA-SIN ENTREGAR",
-                    "INCOMPLETA-CANCELADA"
+                    "INCOMPLETA-SIN ENTREGAR"
                 ]
             )
+        & (~es_cancelada_base)
         ].copy()
 
         if riesgo.empty:
