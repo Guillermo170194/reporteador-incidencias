@@ -147,26 +147,7 @@ if menu == "Resumen Ejecutivo":
     )
 
 
-    st.markdown(
-        "### 📄 Reporte Ejecutivo PDF"
-    )
-
-    if st.button(
-        "📄 Generar reporte ejecutivo PDF",
-        use_container_width=True
-    ):
-
-        pdf = generar_reporte_ejecutivo_pdf(
-            incidencias
-        )
-
-        st.download_button(
-            label="⬇️ Descargar reporte ejecutivo",
-            data=pdf,
-            file_name=f"REPORTE_EJECUTIVO_INCIDENCIAS_{fecha_hoy_sistema()}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+    st.caption("Los indicadores, tablas, PDF y Excel filtrados usan el mismo conjunto de registros.")
 
     st.divider()
     df_resumen = incidencias.copy()
@@ -204,165 +185,9 @@ if menu == "Resumen Ejecutivo":
                 semaforo_seguimiento
             )
 
-        total_real_supabase = contar_incidencias_reales_supabase()
-
-        total = total_real_supabase or len(
-            df_resumen
-        )
-
-        completo_entregado = df_resumen[
-            df_resumen["ESTATUS_SEGUIMIENTO"]
-            .astype(str)
-            .str.upper()
-            .eq("COMPLETO-ENTREGADO")
-        ].shape[0]
-
-        incompleta_sin_entregar = df_resumen[
-            df_resumen["ESTATUS_SEGUIMIENTO"]
-            .astype(str)
-            .str.upper()
-            .eq("INCOMPLETA-SIN ENTREGAR")
-        ].shape[0]
-
-        incompleta_cancelada = df_resumen[
-            df_resumen["ESTATUS_SEGUIMIENTO"]
-            .astype(str)
-            .str.upper()
-            .eq("INCOMPLETA-CANCELADA")
-        ].shape[0]
-
-        sin_estatus = df_resumen[
-            df_resumen["ESTATUS_SEGUIMIENTO"]
-            .astype(str)
-            .str.upper()
-            .isin(
-                [
-                    "",
-                    "SIN ESTATUS",
-                    "NAN",
-                    "NONE"
-                ]
-            )
-        ].shape[0]
-
-        resueltas = 0
-
-        if "ESTATUS_INCIDENCIA" in df_resumen.columns:
-
-            resueltas = df_resumen[
-                df_resumen["ESTATUS_INCIDENCIA"]
-                .astype(str)
-                .str.upper()
-                .isin(
-                    [
-                        "RESUELTA",
-                        "RESUELTO"
-                    ]
-                )
-            ].shape[0]
-
-        porcentaje_entregado = 0
-
-        if total > 0:
-
-            porcentaje_entregado = round(
-                (completo_entregado / total) * 100,
-                2
-            )
-
-        c1, c2, c3, c4, c5 = st.columns(
-            5
-        )
-
-        c1.metric(
-            "Total incidencias",
-            f"{total:,}"
-        )
-
-        c2.metric(
-            "🟢 Completo-Entregado",
-            f"{completo_entregado:,}"
-        )
-
-        c3.metric(
-            "🟡 Incompleta-sin Entregar",
-            f"{incompleta_sin_entregar:,}"
-        )
-
-        c4.metric(
-            "🔴 Incompleta-Cancelada",
-            f"{incompleta_cancelada:,}"
-        )
-
-        c5.metric(
-            "% entregado",
-            f"{porcentaje_entregado}%"
-        )
-
-        st.divider()
-
-        st.subheader(
-            "🚦 Semáforo de seguimiento"
-        )
-
-        resumen_seguimiento = (
-            df_resumen
-            .groupby(
-                "ESTATUS_SEGUIMIENTO",
-                dropna=False
-            )
-            .size()
-            .reset_index(
-                name="TOTAL"
-            )
-            .sort_values(
-                "TOTAL",
-                ascending=False
-            )
-        )
-
-        resumen_seguimiento["SEMAFORO"] = resumen_seguimiento[
-            "ESTATUS_SEGUIMIENTO"
-        ].apply(
-            semaforo_seguimiento
-        )
-
-        chart_seguimiento = (
-            alt.Chart(
-                resumen_seguimiento
-            )
-            .mark_bar()
-            .encode(
-                x=alt.X(
-                    "TOTAL:Q",
-                    title="Total"
-                ),
-                y=alt.Y(
-                    "SEMAFORO:N",
-                    sort="-x",
-                    title="Estatus seguimiento"
-                ),
-                tooltip=[
-                    "SEMAFORO",
-                    "TOTAL"
-                ]
-            )
-        )
-
-        st.altair_chart(
-            chart_seguimiento,
-            use_container_width=True
-        )
-
-        dataframe_limpio(
-            resumen_seguimiento[
-                [
-                    "SEMAFORO",
-                    "ESTATUS_SEGUIMIENTO",
-                    "TOTAL"
-                ]
-            ]
-        )
+        # Los indicadores del conjunto filtrado se calculan después de aplicar los filtros.
+        # El total nacional se muestra por separado, sin mezclar denominadores.
+        total_nacional = len(df_resumen)
 
         st.divider()
 
@@ -450,9 +275,88 @@ if menu == "Resumen Ejecutivo":
                 df_filtrado["RESPONSABLE"].astype(str) == responsable_filtro
             ]
 
-        st.caption(
-            f"Registros filtrados: {len(df_filtrado):,}"
+        total = len(df_filtrado)
+        seguimiento = df_filtrado["ESTATUS_SEGUIMIENTO"].fillna("").astype(str).str.strip().str.upper()
+        completo_entregado = int(seguimiento.eq("COMPLETO-ENTREGADO").sum())
+        incompleta_sin_entregar = int(seguimiento.eq("INCOMPLETA-SIN ENTREGAR").sum())
+        incompleta_cancelada = int(seguimiento.eq("INCOMPLETA-CANCELADA").sum())
+        otros_estatus = total - completo_entregado - incompleta_sin_entregar - incompleta_cancelada
+        porcentaje_entregado = (100 * completo_entregado / total) if total else 0.0
+
+        st.caption(f"Registros del resumen filtrado: {total:,} | Total cargado sin filtros: {total_nacional:,}")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Total filtrado", f"{total:,}")
+        c2.metric("🟢 Completo-Entregado", f"{completo_entregado:,}")
+        c3.metric("🟡 Incompleta-sin Entregar", f"{incompleta_sin_entregar:,}")
+        c4.metric("🔴 Incompleta-Cancelada", f"{incompleta_cancelada:,}")
+        c5.metric("% entregado", f"{porcentaje_entregado:.2f}%")
+        st.caption(f"Otros / sin estatus: {otros_estatus:,}. Verificación: {completo_entregado + incompleta_sin_entregar + incompleta_cancelada + otros_estatus:,} de {total:,} registros.")
+
+        st.divider()
+
+        st.subheader(
+            "🚦 Semáforo de seguimiento"
         )
+
+        resumen_seguimiento = (
+            df_filtrado
+            .groupby(
+                "ESTATUS_SEGUIMIENTO",
+                dropna=False
+            )
+            .size()
+            .reset_index(
+                name="TOTAL"
+            )
+            .sort_values(
+                "TOTAL",
+                ascending=False
+            )
+        )
+
+        resumen_seguimiento["SEMAFORO"] = resumen_seguimiento[
+            "ESTATUS_SEGUIMIENTO"
+        ].apply(
+            semaforo_seguimiento
+        )
+
+        chart_seguimiento = (
+            alt.Chart(
+                resumen_seguimiento
+            )
+            .mark_bar()
+            .encode(
+                x=alt.X(
+                    "TOTAL:Q",
+                    title="Total"
+                ),
+                y=alt.Y(
+                    "SEMAFORO:N",
+                    sort="-x",
+                    title="Estatus seguimiento"
+                ),
+                tooltip=[
+                    "SEMAFORO",
+                    "TOTAL"
+                ]
+            )
+        )
+
+        st.altair_chart(
+            chart_seguimiento,
+            use_container_width=True
+        )
+
+        dataframe_limpio(
+            resumen_seguimiento[
+                [
+                    "SEMAFORO",
+                    "ESTATUS_SEGUIMIENTO",
+                    "TOTAL"
+                ]
+            ]
+        )
+
 
         st.divider()
 
@@ -756,13 +660,26 @@ if menu == "Resumen Ejecutivo":
 
         st.divider()
 
+        st.markdown("### 📄 Reporte ejecutivo PDF (con filtros)")
+        if st.button("Preparar reporte ejecutivo PDF", key="pdf_resumen_filtrado"):
+            st.session_state["pdf_resumen_filtrado"] = generar_reporte_ejecutivo_pdf(df_filtrado.copy())
+        if "pdf_resumen_filtrado" in st.session_state:
+            st.download_button(
+                "⬇️ Descargar PDF preparado",
+                data=st.session_state["pdf_resumen_filtrado"],
+                file_name=f"REPORTE_EJECUTIVO_INCIDENCIAS_{fecha_hoy_sistema()}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        st.caption("Si cambias los filtros, vuelve a preparar el PDF para reflejar la nueva selección.")
+
         with st.expander(
             "⬇️ Exportar resumen filtrado"
         ):
 
-            excel = convertir_excel(
-                df_filtrado
-            )
+            # Exportar TODAS las columnas disponibles, incluidas las originales
+            # de Supabase y los campos auxiliares, sin recortar a columnas de pantalla.
+            excel = convertir_excel(df_filtrado.copy())
 
             st.download_button(
                 label="⬇️ Descargar resumen ejecutivo en Excel",
