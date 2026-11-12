@@ -13,8 +13,19 @@ st.caption(
     "Sistema operativo IMSS-BIENESTAR para seguimiento de incidencias."
 )
 
+# Estilos ligeros: no se cargan fuentes, imágenes ni bibliotecas externas.
+st.markdown("""
+<style>
+.block-container {padding-top: 1.25rem; padding-bottom: 2rem; max-width: 1450px;}
+[data-testid="stSidebar"] {background: #f7faf9;}
+[data-testid="stSidebar"] h1 {font-size: 1.2rem;}
+h1 {letter-spacing: -.025em;}
+div[data-testid="stMetric"] {border: 1px solid #e3ebe8; border-radius: 10px; padding: .65rem .9rem;}
+</style>
+""", unsafe_allow_html=True)
+
 st.sidebar.title(
-    "⚙️ Panel de control"
+    "Panel de control"
 )
 
 st.sidebar.success(
@@ -46,7 +57,9 @@ menu = st.sidebar.radio(
 
 # No se modifican filas en Supabase. Se excluyen urgencias históricas
 # de los paneles de Incidencias únicamente a nivel de presentación.
-incidencias = cargar_incidencias()
+# Urgencias trabaja con Google Sheets: no descargar toda la tabla de
+# incidencias desde Supabase cuando se abre este módulo.
+incidencias = pd.DataFrame() if menu == "Urgencias" else cargar_incidencias()
 if menu != "Urgencias" and not incidencias.empty and "TIPO_INCIDENCIA" in incidencias.columns:
     incidencias = incidencias.loc[
         ~incidencias["TIPO_INCIDENCIA"].fillna("").astype(str).str.strip().str.upper().eq("URGENCIA")
