@@ -661,12 +661,22 @@ if menu == "Resumen Ejecutivo":
         st.divider()
 
         st.markdown("### 📄 Reporte ejecutivo PDF (con filtros)")
-        if st.button("Preparar reporte ejecutivo PDF", key="pdf_resumen_filtrado"):
-            st.session_state["pdf_resumen_filtrado"] = generar_reporte_ejecutivo_pdf(df_filtrado.copy())
-        if "pdf_resumen_filtrado" in st.session_state:
+        if st.button("Preparar reporte ejecutivo PDF", key="btn_preparar_pdf_resumen"):
+            pdf_generado = generar_reporte_ejecutivo_pdf(df_filtrado.copy())
+            if hasattr(pdf_generado, "getvalue"):
+                pdf_generado = pdf_generado.getvalue()
+            if isinstance(pdf_generado, bytearray):
+                pdf_generado = bytes(pdf_generado)
+            if isinstance(pdf_generado, bytes) and pdf_generado.startswith(b"%PDF-"):
+                st.session_state["archivo_pdf_resumen_filtrado"] = pdf_generado
+            else:
+                st.session_state.pop("archivo_pdf_resumen_filtrado", None)
+                st.error("No se pudo generar un PDF válido. Revisa los datos del reporte.")
+        pdf_preparado = st.session_state.get("archivo_pdf_resumen_filtrado")
+        if isinstance(pdf_preparado, bytes) and pdf_preparado.startswith(b"%PDF-"):
             st.download_button(
                 "⬇️ Descargar PDF preparado",
-                data=st.session_state["pdf_resumen_filtrado"],
+                data=pdf_preparado,
                 file_name=f"REPORTE_EJECUTIVO_INCIDENCIAS_{fecha_hoy_sistema()}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
